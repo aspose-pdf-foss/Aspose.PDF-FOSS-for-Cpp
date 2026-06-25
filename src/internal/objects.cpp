@@ -18,6 +18,17 @@
 
 namespace foundation::objects {
 
+// Out-of-line special members for Value (declared in objects.hpp). Defined
+// here, where Value/Dict/Array are complete, so the recursive-type trait
+// instantiation that clang + libstdc++ reject is never forced on an
+// incomplete Value at the header-include sites.
+Value::Value() = default;
+Value::Value(const Value&) = default;
+Value::Value(Value&&) noexcept = default;
+Value& Value::operator=(const Value&) = default;
+Value& Value::operator=(Value&&) noexcept = default;
+Value::~Value() = default;
+
 namespace {
 
 // Forward declarations for mutually recursive helpers

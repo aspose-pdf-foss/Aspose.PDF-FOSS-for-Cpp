@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -61,6 +62,28 @@ struct Value {
         Stream,
         Ref
     > v;
+
+    // Special members are user-declared here and defined out-of-line in
+    // objects.cpp (where Value/Dict/Array are complete). This breaks the
+    // recursive-type instantiation cycle
+    //   Value -> Dict -> std::vector<std::pair<std::string, Value>> -> Value
+    // which, under clang + libstdc++, otherwise eagerly evaluates
+    // completeness traits on the still-incomplete Value and fails to
+    // compile (gcc defers the same instantiation, so it slips through).
+    Value();
+    Value(const Value&);
+    Value(Value&&) noexcept;
+    Value& operator=(const Value&);
+    Value& operator=(Value&&) noexcept;
+    ~Value();
+
+    // Preserve the aggregate-style ergonomics this type had before the
+    // special members above were declared: `Value{x}` for any variant
+    // alternative x. Excluded for Value itself so copy/move are chosen.
+    template <class T,
+              class = std::enable_if_t<
+                  !std::is_same_v<std::remove_cvref_t<T>, Value>>>
+    Value(T&& x) : v(std::forward<T>(x)) {}
 };
 
 struct IndirectObject {
