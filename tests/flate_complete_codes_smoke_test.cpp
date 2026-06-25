@@ -15,6 +15,7 @@
 
 #include "flate.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <random>
 #include <stdexcept>

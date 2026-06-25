@@ -7,6 +7,7 @@
 // Destination) and load-on-open parsing of an existing /Outlines tree.
 // =============================================================================
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <string>

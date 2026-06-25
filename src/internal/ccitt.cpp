@@ -35,6 +35,7 @@
 
 #include "ccitt.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>

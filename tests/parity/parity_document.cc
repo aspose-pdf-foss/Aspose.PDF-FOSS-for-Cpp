@@ -17,6 +17,7 @@
 //         ParityEncryption (from test_encryption.cpp).
 // =============================================================================
 
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include <aspose/pdf/crypto_algorithm.hpp>

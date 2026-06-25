@@ -1,5 +1,6 @@
 #include "glyph_rasterizer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
