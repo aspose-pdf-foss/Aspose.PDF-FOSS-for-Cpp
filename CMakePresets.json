@@ -1,0 +1,90 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default — single-config (Ninja, Release)",
+      "description": "Single-config Ninja generator. Picks Release when no build type is specified, matching CMakeLists.txt's default.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "default-debug",
+      "displayName": "Default Debug — single-config (Ninja, Debug)",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Visual Studio 2022 — multi-config (MSBuild)",
+      "description": "Visual Studio 17 2022 multi-config generator. Pick Debug or Release at build time. Forces /utf-8 via CMakeLists; needs Python 3 on PATH for the standard14 outlines bundle generator.",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-ninja",
+      "displayName": "VS 2022 + Ninja — single-config (MSVC compiler, Ninja)",
+      "description": "Single-config Ninja with MSVC. Faster incremental builds than the VS multi-config generator. Requires running from a Visual Studio Developer Command Prompt or PowerShell with VsDevCmd.bat sourced.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default"
+    },
+    {
+      "name": "default-debug",
+      "configurePreset": "default-debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "nativeToolOptions": ["/maxcpucount"]
+    },
+    {
+      "name": "windows-msvc-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug",
+      "nativeToolOptions": ["/maxcpucount"]
+    },
+    {
+      "name": "windows-msvc-ninja",
+      "configurePreset": "windows-msvc-ninja"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "output": {"outputOnFailure": true}
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+TrueType fixtures — source and licensing
+=========================================
+
+Three tiny TTFs from the Google Noto project, redistributed here under
+the SIL Open Font License v1.1 (see OFL.txt). Chosen for three reasons:
+
+  1. Small (5–8 KiB each), keeping the fixture directory reviewable.
+  2. Format-4 (BMP) cmap only — keeps v1 scope tight. Format-12
+     (supplementary planes) fonts are a v2 corpus concern.
+  3. Diverse glyph counts (29 / 41 / 44) so the oracle comparison
+     isn't trivially degenerate.
+
+Fixtures
+--------
+
+  buhid.ttf      — Noto Sans Buhid Regular
+                   44 glyphs, unitsPerEm 1000.
+                   Upstream: notofonts.github.io / noto-fonts
+
+  buginese.ttf   — Noto Sans Buginese Regular
+                   41 glyphs, unitsPerEm 1000.
+                   Upstream: notofonts.github.io / noto-fonts
+
+  tagbanwa.ttf   — Noto Sans Tagbanwa Regular
+                   29 glyphs, unitsPerEm 1000.
+                   Upstream: notofonts.github.io / noto-fonts
+
+All three were copied from the macOS system font library
+(/System/Library/Fonts/Supplemental/Noto Sans*), which redistributes
+Google's original Noto build. The original upstream at
+https://notofonts.github.io/ carries the same OFL.

@@ -1,0 +1,24 @@
+%!PS-Adobe-3.0 Resource-CMap
+%% 1-byte codes, bfrange with single-hex dst. Each successive
+%% src code in the range maps to the dst with its last UTF-16
+%% code unit incremented.
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+2 beginbfrange
+<41> <43> <0041>
+<61> <63> <0061>
+endbfrange
+1 beginbfchar
+<20> <0020>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end

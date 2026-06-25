@@ -1,0 +1,11 @@
+eol_variants.pdf:
+
+PDF-1.4
+
+Pages: 1
+
+Not a ZUGFeRD file.
+Retrieving info from pages 1-1...
+Mediaboxes (1):
+	1	(3 0 R):	[ 0 0 100 100 ]
+

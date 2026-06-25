@@ -1,0 +1,26 @@
+%!PS-Adobe-3.0 Resource-CMap
+%% 2-byte codespace with a mix of bfchar (including a
+%% multi-codepoint dst — an ffi ligature mapping to three UTF-16
+%% code units) and bfrange. Represents the typical shape of a
+%% CIDFont ToUnicode CMap.
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+3 beginbfchar
+<0041> <0041>
+<0100> <0066 0066 0069>
+<0200> <00E1>
+endbfchar
+1 beginbfrange
+<0300> <0302> <0061>
+endbfrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end

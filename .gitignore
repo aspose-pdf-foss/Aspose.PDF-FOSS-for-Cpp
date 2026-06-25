@@ -1,0 +1,20 @@
+build/
+build_release/
+build-rel/
+.DS_Store
+.cache/
+*.o
+*.a
+*.so
+*.dylib
+
+# Orchestrator / scanner state — regenerated on each run, must
+# not be committed. Empty .lock files are leftover process
+# locks; .working.json holds in-flight session scratch;
+# stub_methods.json is rederived from the source tree by the
+# stub-detection scanner.
+.build.lock
+.setup.lock
+.state.lock
+.working.json
+stub_methods.json

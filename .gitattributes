@@ -1,0 +1,57 @@
+# Per-file content handling — overrides the host's
+# core.autocrlf setting so binary fixtures round-trip
+# byte-identical across Linux ↔ Windows ↔ macOS clones.
+#
+# Why this file exists: Git for Windows defaults
+# core.autocrlf=true, which converts \n → \r\n at checkout for
+# files Git's content heuristic classifies as "text". Some of
+# our PDF + binary-fixture files look text-like to that
+# heuristic (mostly ASCII content) and get mangled, shifting
+# the byte-offset tables inside them (PDF xref offsets, PNG
+# chunk CRCs, TIFF strip byte counts, …). The downstream parse
+# fails with cryptic errors like:
+#
+#   "xref: /XRef stream: bad object id"
+#
+# every test that opens a fixture then explodes. Listing the
+# binary extensions explicitly here is the durable fix; it
+# applies regardless of the host's core.autocrlf setting.
+
+# Document / image / font fixtures.
+*.pdf       binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.tif       binary
+*.tiff      binary
+*.bmp       binary
+*.gif       binary
+*.ttf       binary
+*.otf       binary
+
+# Foundation-primitive raw-bytes corpora.
+*.bin       binary
+*.pixels    binary
+*.cff       binary
+*.cmap      binary
+
+# Per-primitive "*.<primitive>fix" binary fixtures (round-trip
+# oracle input/output pairs). One extension per primitive shipping
+# a generator under tests/fixtures/<primitive>/.
+*.bencfix   binary
+*.ccfix     binary
+*.dencfix   binary
+*.pencfix   binary
+*.tencfix   binary
+
+# Byte-exact gate-test sidecars + fixtures — although several
+# carry XML/text content (.xmp is XMP-metadata XML; .canonical /
+# .expected hold expected canonical output text), the byte-exact
+# gates compare them byte-by-byte against
+# the lib's output. Any \n → \r\n conversion at checkout would
+# break the comparison even when the conceptual content is
+# unchanged. Treat as binary.
+*.canonical binary
+*.expected  binary
+*.case      binary
+*.xmp       binary

@@ -1,0 +1,38 @@
+unitsPerEm 1000
+isCID 0
+fontName NotoSerifYezidi-Regular
+numGlyphs 6
+glyph 0 .notdef 600
+  M 94 0
+  L 505 0
+  L 505 714
+  L 94 714
+  Z
+  M 145 51
+  L 145 663
+  L 454 663
+  L 454 51
+  Z
+glyph 1 uni0000 0
+glyph 2 uni000D 260
+glyph 3 space 260
+glyph 4 elifyezi 244
+  M 112 0
+  L 148 0
+  C 150 60 152 162 152 251
+  C 152 452 143 597 119 770
+  L 114 770
+  L 38 714
+  C 89 506 112 282 112 0
+  Z
+glyph 5 beyezi 533
+  M 270 0
+  L 280 0
+  C 346 159 419 312 493 442
+  L 462 463
+  C 404 357 350 249 299 130
+  C 239 251 174 362 106 468
+  L 100 468
+  L 34 394
+  C 118 271 198 141 270 0
+  Z

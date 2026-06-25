@@ -1,0 +1,23 @@
+%!PS-Adobe-3.0 Resource-CMap
+%% Minimal 1-byte bfchar-only ToUnicode CMap. Exercises:
+%%  - a single 1-byte codespace
+%%  - a simple beginbfchar block with single-codepoint BMP dsts
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+4 beginbfchar
+<41> <0041>
+<42> <0042>
+<61> <0061>
+<7A> <007A>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end

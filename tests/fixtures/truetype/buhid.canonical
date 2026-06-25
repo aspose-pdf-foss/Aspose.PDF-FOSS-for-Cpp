@@ -1,0 +1,727 @@
+unitsPerEm 1000
+ascent 1069
+descent -293
+numGlyphs 44
+width 0 600
+width 1 0
+width 2 260
+width 3 260
+width 4 260
+width 5 329
+width 6 488
+width 7 828
+width 8 828
+width 9 625
+width 10 619
+width 11 599
+width 12 805
+width 13 1025
+width 14 817
+width 15 438
+width 16 828
+width 17 619
+width 18 734
+width 19 881
+width 20 613
+width 21 867
+width 22 817
+width 23 758
+width 24 574
+width 25 0
+width 26 0
+width 27 619
+width 28 671
+width 29 826
+width 30 805
+width 31 817
+width 32 516
+width 33 828
+width 34 881
+width 35 969
+width 36 613
+width 37 613
+width 38 867
+width 39 758
+width 40 0
+width 41 0
+width 42 0
+width 43 594
+cmap 0000 1
+cmap 000D 2
+cmap 0020 3
+cmap 00A0 4
+cmap 1735 5
+cmap 1736 6
+cmap 1740 7
+cmap 1741 8
+cmap 1742 9
+cmap 1743 10
+cmap 1744 11
+cmap 1745 12
+cmap 1746 13
+cmap 1747 14
+cmap 1748 15
+cmap 1749 16
+cmap 174A 17
+cmap 174B 18
+cmap 174C 19
+cmap 174D 20
+cmap 174E 21
+cmap 174F 22
+cmap 1750 23
+cmap 1751 24
+cmap 1752 25
+cmap 1753 26
+cmap 200B 40
+cmap 200C 41
+cmap 200D 42
+cmap 25CC 43
+glyph 0 simple 2 8
+  on 94 0
+  on 94 714
+  on 505 714
+  on 505 0
+  on 145 51
+  on 454 51
+  on 454 663
+  on 145 663
+  contour_end 3
+  contour_end 7
+glyph 1 empty
+glyph 2 empty
+glyph 3 empty
+glyph 4 empty
+glyph 5 simple 1 4
+  on 18 -139
+  on 222 750
+  on 292 750
+  on 87 -139
+  contour_end 3
+glyph 6 simple 2 8
+  on 18 -139
+  on 222 750
+  on 292 750
+  on 87 -139
+  on 177 -139
+  on 381 750
+  on 451 750
+  on 246 -139
+  contour_end 3
+  contour_end 7
+glyph 7 simple 1 10
+  on 143 0
+  on 251 468
+  on 53 468
+  on 69 536
+  on 346 536
+  on 237 68
+  on 443 68
+  on 728 714
+  on 813 714
+  on 497 0
+  contour_end 9
+glyph 8 simple 2 14
+  on 143 0
+  on 252 468
+  on 52 468
+  on 69 536
+  on 346 536
+  on 238 68
+  on 444 68
+  on 728 714
+  on 813 714
+  on 497 0
+  on 100 -184
+  on 116 -116
+  on 471 -116
+  on 455 -184
+  contour_end 9
+  contour_end 13
+glyph 9 simple 1 10
+  on 374 0
+  on 451 234
+  on 207 234
+  on 272 468
+  on 53 468
+  on 69 536
+  on 371 536
+  on 306 302
+  on 556 302
+  on 455 0
+  contour_end 9
+glyph 10 simple 2 8
+  on 163 468
+  on 179 536
+  on 532 536
+  on 516 468
+  on 55 0
+  on 71 68
+  on 425 68
+  on 409 0
+  contour_end 3
+  contour_end 7
+glyph 11 simple 1 8
+  on 310 0
+  on 368 254
+  on 93 254
+  on 165 568
+  on 245 568
+  on 188 322
+  on 463 322
+  on 388 0
+  contour_end 7
+glyph 12 simple 1 12
+  on 55 0
+  on 71 68
+  on 343 68
+  on 442 500
+  on 170 500
+  on 186 568
+  on 540 568
+  on 482 318
+  on 754 318
+  on 739 250
+  on 466 250
+  on 409 0
+  contour_end 11
+glyph 13 simple 1 16
+  on 50 0
+  on 174 536
+  on 253 536
+  on 144 68
+  on 268 68
+  on 379 322
+  on 635 322
+  on 592 68
+  on 715 68
+  on 918 536
+  on 1003 536
+  on 769 0
+  on 504 0
+  on 547 254
+  on 433 254
+  on 322 0
+  contour_end 15
+glyph 14 simple 1 12
+  on 143 0
+  on 223 350
+  on 3 350
+  on 20 418
+  on 240 418
+  on 308 714
+  on 387 714
+  on 237 68
+  on 444 68
+  on 728 714
+  on 813 714
+  on 497 0
+  contour_end 11
+glyph 15 simple 1 8
+  on 105 0
+  on 254 646
+  on 87 646
+  on 103 714
+  on 496 714
+  on 480 646
+  on 333 646
+  on 183 0
+  contour_end 7
+glyph 16 simple 1 12
+  on 159 0
+  on 267 468
+  on 69 468
+  on 85 536
+  on 362 536
+  on 253 68
+  on 436 68
+  on 597 536
+  on 874 536
+  on 858 468
+  on 656 468
+  on 493 0
+  contour_end 11
+glyph 17 simple 1 8
+  on 55 0
+  on 71 68
+  on 343 68
+  on 442 500
+  on 170 500
+  on 186 568
+  on 540 568
+  on 409 0
+  contour_end 7
+glyph 18 simple 2 12
+  on 50 0
+  on 181 568
+  on 260 568
+  on 251 532
+  on 587 532
+  on 650 714
+  on 733 714
+  on 484 0
+  on 144 68
+  on 427 68
+  on 563 464
+  on 236 464
+  contour_end 7
+  contour_end 11
+glyph 19 simple 1 14
+  on 119 0
+  on 227 468
+  on 69 468
+  on 85 536
+  on 322 536
+  on 213 68
+  on 352 68
+  on 513 536
+  on 795 536
+  on 671 0
+  on 592 0
+  on 700 468
+  on 572 468
+  on 409 0
+  contour_end 13
+glyph 20 simple 1 4
+  on 68 295
+  on 84 363
+  on 555 363
+  on 539 295
+  contour_end 3
+glyph 21 simple 2 16
+  on 195 -250
+  on 281 0
+  on 50 0
+  on 142 398
+  on 221 398
+  on 145 68
+  on 305 68
+  on 480 576
+  on 854 576
+  on 619 0
+  on 361 0
+  on 275 -250
+  on 385 68
+  on 565 68
+  on 743 508
+  on 538 508
+  contour_end 11
+  contour_end 15
+glyph 22 simple 1 12
+  on 50 0
+  on 174 536
+  on 253 536
+  on 144 68
+  on 535 68
+  on 648 348
+  on 465 348
+  on 408 175
+  on 328 175
+  on 406 416
+  on 759 416
+  on 589 0
+  contour_end 11
+glyph 23 simple 1 14
+  on 523 -56
+  on 600 178
+  on 362 178
+  on 440 412
+  on 200 412
+  on 277 646
+  on 73 646
+  on 89 714
+  on 382 714
+  on 303 480
+  on 544 480
+  on 466 246
+  on 705 246
+  on 604 -56
+  contour_end 13
+glyph 24 simple 1 6
+  on 50 0
+  on 174 536
+  on 253 536
+  on 144 68
+  on 455 68
+  on 439 0
+  contour_end 5
+glyph 25 simple 1 4
+  on -356 648
+  on -340 716
+  on 15 716
+  on -1 648
+  contour_end 3
+glyph 26 simple 1 4
+  on -553 -184
+  on -537 -116
+  on -182 -116
+  on -198 -184
+  contour_end 3
+glyph 27 simple 1 12
+  on 201 15
+  on 256 254
+  on 70 254
+  on 86 322
+  on 272 322
+  on 320 529
+  on 397 529
+  on 350 322
+  on 528 322
+  on 512 254
+  on 334 254
+  on 278 15
+  contour_end 11
+glyph 28 simple 1 12
+  on 310 0
+  on 368 254
+  on 93 254
+  on 165 568
+  on 245 568
+  on 188 322
+  on 463 322
+  on 437 210
+  on 623 210
+  on 606 142
+  on 421 142
+  on 388 0
+  contour_end 11
+glyph 29 simple 2 16
+  on 55 0
+  on 71 68
+  on 343 68
+  on 442 500
+  on 170 500
+  on 186 568
+  on 540 568
+  on 482 318
+  on 754 318
+  on 739 250
+  on 466 250
+  on 409 0
+  on 551 370
+  on 567 438
+  on 780 438
+  on 764 370
+  contour_end 11
+  contour_end 15
+glyph 30 simple 2 16
+  on 55 0
+  on 71 68
+  on 343 68
+  on 442 500
+  on 170 500
+  on 186 568
+  on 540 568
+  on 482 318
+  on 754 318
+  on 739 250
+  on 466 250
+  on 409 0
+  on 494 120
+  on 510 188
+  on 723 188
+  on 707 120
+  contour_end 11
+  contour_end 15
+glyph 31 simple 1 12
+  on 143 0
+  on 291 646
+  on 71 646
+  on 88 714
+  on 387 714
+  on 237 68
+  on 444 68
+  on 698 646
+  on 486 646
+  on 503 714
+  on 813 714
+  on 497 0
+  contour_end 11
+glyph 32 simple 1 12
+  on 299 0
+  on 357 254
+  on 164 254
+  on 254 646
+  on 87 646
+  on 103 714
+  on 496 714
+  on 480 646
+  on 333 646
+  on 258 322
+  on 452 322
+  on 377 0
+  contour_end 11
+glyph 33 simple 1 16
+  on 159 0
+  on 267 468
+  on 69 468
+  on 85 536
+  on 362 536
+  on 253 68
+  on 436 68
+  on 597 536
+  on 874 536
+  on 858 468
+  on 656 468
+  on 594 290
+  on 787 290
+  on 771 222
+  on 570 222
+  on 493 0
+  contour_end 15
+glyph 34 simple 2 14
+  on 50 0
+  on 181 568
+  on 260 568
+  on 251 532
+  on 587 532
+  on 650 714
+  on 925 714
+  on 909 646
+  on 709 646
+  on 484 0
+  on 144 68
+  on 427 68
+  on 563 464
+  on 236 464
+  contour_end 9
+  contour_end 13
+glyph 35 simple 1 16
+  on 119 0
+  on 227 468
+  on 69 468
+  on 85 536
+  on 322 536
+  on 213 68
+  on 352 68
+  on 513 536
+  on 795 536
+  on 687 68
+  on 881 68
+  on 865 0
+  on 592 0
+  on 700 468
+  on 572 468
+  on 409 0
+  contour_end 15
+glyph 36 simple 1 14
+  on 193 0
+  on 252 254
+  on 59 254
+  on 75 322
+  on 268 322
+  on 325 568
+  on 578 568
+  on 562 500
+  on 387 500
+  on 345 322
+  on 546 322
+  on 530 254
+  on 330 254
+  on 271 0
+  contour_end 13
+glyph 37 simple 1 14
+  on 193 0
+  on 252 254
+  on 59 254
+  on 75 322
+  on 268 322
+  on 325 568
+  on 402 568
+  on 345 322
+  on 546 322
+  on 530 254
+  on 330 254
+  on 286 68
+  on 477 68
+  on 460 0
+  contour_end 13
+glyph 38 simple 2 18
+  on 195 -250
+  on 281 0
+  on 50 0
+  on 217 716
+  on 572 716
+  on 556 648
+  on 281 648
+  on 145 68
+  on 305 68
+  on 480 576
+  on 854 576
+  on 619 0
+  on 361 0
+  on 275 -250
+  on 385 68
+  on 565 68
+  on 743 508
+  on 538 508
+  contour_end 13
+  contour_end 17
+glyph 39 simple 2 18
+  on 523 -56
+  on 600 178
+  on 362 178
+  on 440 412
+  on 200 412
+  on 277 646
+  on 73 646
+  on 89 714
+  on 382 714
+  on 303 480
+  on 544 480
+  on 466 246
+  on 705 246
+  on 604 -56
+  on 374 556
+  on 395 624
+  on 588 624
+  on 572 556
+  contour_end 13
+  contour_end 17
+glyph 40 empty
+glyph 41 empty
+glyph 42 empty
+glyph 43 simple 16 128
+  on 323 514
+  off 323 487
+  on 297 487
+  off 271 487
+  on 271 514
+  off 271 540
+  on 297 540
+  off 323 540
+  on 408 496
+  off 408 470
+  on 383 470
+  off 355 470
+  on 355 496
+  off 355 523
+  on 383 523
+  off 408 523
+  on 239 496
+  off 239 470
+  on 212 470
+  off 186 470
+  on 186 496
+  off 186 523
+  on 212 523
+  off 239 523
+  on 480 448
+  off 480 422
+  on 455 422
+  off 428 422
+  on 428 448
+  off 428 475
+  on 455 475
+  off 480 475
+  on 167 448
+  off 167 422
+  on 140 422
+  off 114 422
+  on 114 447
+  off 114 475
+  on 140 475
+  off 167 475
+  on 529 376
+  off 529 349
+  on 502 349
+  off 476 349
+  on 476 376
+  off 476 402
+  on 503 402
+  off 529 402
+  on 118 376
+  off 118 349
+  on 93 349
+  off 65 349
+  on 65 376
+  off 65 402
+  on 92 402
+  off 118 402
+  on 546 291
+  off 546 265
+  on 521 265
+  off 494 265
+  on 494 291
+  off 494 317
+  on 521 317
+  off 546 317
+  on 101 291
+  off 101 265
+  on 75 265
+  off 48 265
+  on 48 291
+  off 48 317
+  on 75 317
+  off 101 317
+  on 529 206
+  off 529 180
+  on 502 180
+  off 476 180
+  on 476 206
+  off 476 233
+  on 502 233
+  off 529 233
+  on 118 206
+  off 118 180
+  on 92 180
+  off 65 180
+  on 65 206
+  off 65 233
+  on 92 233
+  off 118 233
+  on 480 133
+  off 480 107
+  on 455 107
+  off 428 107
+  on 428 133
+  off 428 160
+  on 455 160
+  off 480 160
+  on 167 133
+  off 167 107
+  on 140 107
+  off 114 107
+  on 114 133
+  off 114 160
+  on 140 160
+  off 167 160
+  on 408 85
+  off 408 60
+  on 383 60
+  off 355 60
+  on 355 85
+  off 355 112
+  on 383 112
+  off 408 112
+  on 239 87
+  off 239 60
+  on 212 60
+  off 186 60
+  on 186 85
+  off 186 112
+  on 212 112
+  off 239 112
+  on 323 69
+  off 323 42
+  on 297 42
+  off 271 42
+  on 271 69
+  off 271 95
+  on 297 95
+  off 323 95
+  contour_end 7
+  contour_end 15
+  contour_end 23
+  contour_end 31
+  contour_end 39
+  contour_end 47
+  contour_end 55
+  contour_end 63
+  contour_end 71
+  contour_end 79
+  contour_end 87
+  contour_end 95
+  contour_end 103
+  contour_end 111
+  contour_end 119
+  contour_end 127

@@ -1,0 +1,27 @@
+unitsPerEm 1000
+ascent 800
+descent -200
+numGlyphs 4
+width 0 600
+width 1 500
+width 2 400
+width 3 300
+glyph 0 simple 1 4
+  on 50 0
+  on 550 0
+  on 550 700
+  on 50 700
+  contour_end 3
+glyph 1 simple 1 4
+  on 50 0
+  on 450 0
+  on 450 500
+  on 50 500
+  contour_end 3
+glyph 2 simple 1 4
+  on 100 0
+  on 300 0
+  on 300 700
+  on 100 700
+  contour_end 3
+glyph 3 empty

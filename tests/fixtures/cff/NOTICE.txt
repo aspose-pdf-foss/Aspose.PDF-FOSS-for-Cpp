@@ -1,0 +1,67 @@
+CFF fixtures — source and licensing
+====================================
+
+Four small CFF byte streams, extracted from upstream OpenType
+font programs and redistributed here under the SIL Open Font
+License v1.1 (see OFL.txt) or the Adobe-OFL Source Han license.
+Chosen for diverse coverage of the CFF v1 feature surface:
+
+  * non-CID (Type-1-style CFF) and CID-keyed CFF
+  * different unitsPerEm-default uses (all default to 1000)
+  * different numbers of subroutines and contour shapes
+  * presence of cubic close-paths (real geometry) AND
+    line-only close-paths (no control points)
+
+Fixtures
+--------
+
+  masaramgondi.cff      — extracted from Noto Sans Masaram
+                          Gondi-Regular (8 glyphs subset).
+                          Non-CID. Upstream:
+                          notofonts.github.io / noto-fonts
+                          Source font copied from the macOS
+                          system font library (/System/Library/
+                          Fonts/Supplemental/), which
+                          redistributes Google's official Noto
+                          build under SIL OFL.
+
+  yezidi.cff            — extracted from Noto Serif Yezidi-
+                          Regular (6 glyphs subset). Non-CID,
+                          contains script-specific complex
+                          curves. Upstream + redistribution
+                          path same as masaramgondi.
+
+  tifinagh.cff          — extracted from Noto Sans Tifinagh-
+                          Regular (7 glyphs subset). Non-CID,
+                          square-and-circle script with mixed
+                          straight + cubic-curve closepaths.
+                          Upstream + redistribution path same
+                          as masaramgondi.
+
+  sourcehansans_cn.cff  — extracted from Source Han Sans CN
+                          Light (8 glyphs subset). CID-keyed
+                          (FDArray + FDSelect). Upstream:
+                          adobe-fonts/source-han-sans on
+                          GitHub, Adobe-OFL.
+
+The .cff fixture files are committed; the source OTFs are not
+(some are >5 MB). Re-derive with `python3 make_corpus.py` —
+that script subsets the source fonts and writes the .cff
+files. Re-run `python3 generate_fixtures.py` afterwards to
+materialise the .canonical sidecars.
+
+License notes
+-------------
+
+SIL Open Font License v1.1 — see OFL.txt for the full text.
+Permits redistribution and modification of the font (or
+extracts thereof, like our .cff slices) provided:
+
+  * the font name is preserved or modified consistently,
+  * derivatives are released under the same OFL,
+  * the font is not sold by itself.
+
+Source Han Sans is licensed under the SIL OFL by Adobe. The
+8-glyph subset preserves Adobe's font-name strings inside the
+CFF Name INDEX (so the font's identity remains attributable)
+and is distributed under the same OFL terms.

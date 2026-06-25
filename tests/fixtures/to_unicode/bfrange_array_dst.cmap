@@ -1,0 +1,19 @@
+%!PS-Adobe-3.0 Resource-CMap
+%% 1-byte codes, bfrange with per-char array dst. The array has
+%% exactly (end - start + 1) entries.
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<00> <FF>
+endcodespacerange
+1 beginbfrange
+<10> <12> [<0041> <0042> <0043>]
+endbfrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
