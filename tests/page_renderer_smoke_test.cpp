@@ -823,3 +823,31 @@ TEST(PageRendererSmoke, PageTreeRoot_NoType_InferredFromKids) {
     EXPECT_LT(c[1], 60u);
     EXPECT_LT(c[2], 60u);
 }
+
+// ---------------------------------------------------------------------------
+// inline_image.pdf: a §8.9.7 inline image (BI / ID <samples> EI) — a 1x1
+// DeviceRGB red pixel scaled by the CTM to fill the page. A renderer that
+// drops inline-image samples (the prior behaviour) leaves the page white;
+// honouring them paints it red (field reproducer 33433.pdf, a single
+// page-filling inline image). Exercises abbreviation expansion (/W /H /CS
+// /BPC and the /RGB colour-space abbreviation). Discriminator: centre red.
+// ---------------------------------------------------------------------------
+
+TEST(PageRendererSmoke, InlineImage_RendersSamples) {
+    const auto pdf = FixtureRoot() / "inline_image.pdf";
+    ASSERT_TRUE(std::filesystem::exists(pdf)) << pdf;
+
+    const auto bytes = ReadFile(pdf);
+    const auto out = foundation::page_renderer::Render(
+        std::span<const std::byte>(bytes.data(), bytes.size()),
+        /*page_index=*/0, /*target_dpi=*/72.0);
+    ASSERT_EQ(out.width, 100u);
+    ASSERT_EQ(out.height, 100u);
+
+    const std::size_t off = (50u * out.width + 50u) * 4u;
+    ASSERT_LT(off + 3u, out.pixels.size());
+    EXPECT_GT(out.pixels[off], 200u)     << "centre R (inline image drawn)";
+    EXPECT_LT(out.pixels[off + 1], 60u)  << "centre G";
+    EXPECT_LT(out.pixels[off + 2], 60u)  << "centre B";
+    EXPECT_GT(out.pixels[off + 3], 200u) << "centre A";
+}

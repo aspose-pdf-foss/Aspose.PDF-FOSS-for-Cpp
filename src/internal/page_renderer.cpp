@@ -2326,17 +2326,14 @@ void HandleTJArray(Raster& dst, const Matrix& ctm,
 // {a=1, b=0, c=0, d=-1, e=0, f=1} — a y-flip plus translate.
 // Composed onto state.ctm (PDF_local → device) gives the CTM
 // the compositor expects: image_unit → device.
-void HandleDo(Raster& dst,
-              const Matrix& state_ctm,
-              const std::map<std::string, ResolvedImage>& images,
-              const std::string& resource_name,
-              double alpha = 1.0,
-              const foundation::rasterizer::ClipRect* clip = nullptr) {
-    const auto it = images.find(resource_name);
-    if (it == images.end()) return;
-    const auto& img = it->second;
-    if (!img.valid) return;
-    if (img.width == 0 || img.height == 0) return;
+// Composite a decoded image (RGBA8, top-row-first) onto `dst`, mapping the
+// image's unit square through `state_ctm` (the CTM already places + scales
+// the unit square per §8.9.5.1). Shared by the /Do image path and by inline
+// images (§8.9.7), which differ only in how the ResolvedImage is obtained.
+void CompositeResolvedImage(
+        Raster& dst, const Matrix& state_ctm, const ResolvedImage& img,
+        double alpha, const foundation::rasterizer::ClipRect* clip) {
+    if (!img.valid || img.width == 0 || img.height == 0) return;
 
     // Top-left of source data → PDF user (0, 1); bottom-right →
     // (1, 0). Row-vector form per the rest of the renderer.
@@ -2350,13 +2347,85 @@ void HandleDo(Raster& dst,
     foundation::image_compositor::ImageSource src;
     src.width = img.width;
     src.height = img.height;
-    // Non-owning view; `img` (a cached ResolvedImage) outlives this
-    // call, so placement is allocation-free even when the same image
-    // is drawn repeatedly (e.g. across tiling-pattern cells).
+    // Non-owning view; `img` outlives this call (a cached ResolvedImage for
+    // /Do, a stack local for an inline image), so placement is allocation-
+    // free even when the same image is drawn repeatedly (tiling-pattern
+    // cells).
     src.pixels = img.rgba8;  // RGBA8, row-major, top-row-first
 
     foundation::image_compositor::Composite(
         dst, src, composite_ctm, alpha, clip);
+}
+
+void HandleDo(Raster& dst,
+              const Matrix& state_ctm,
+              const std::map<std::string, ResolvedImage>& images,
+              const std::string& resource_name,
+              double alpha = 1.0,
+              const foundation::rasterizer::ClipRect* clip = nullptr) {
+    const auto it = images.find(resource_name);
+    if (it == images.end()) return;
+    CompositeResolvedImage(dst, state_ctm, it->second, alpha, clip);
+}
+
+// Expand a §8.9.7 inline-image parameter dict into the full-name dict the
+// shared image base path (BuildResolvedImageBase / ResolveColorSpace /
+// FilterChain) reads: the abbreviated keys W/H/BPC/CS/F/D/DP/IM/I map to
+// Width/Height/BitsPerComponent/ColorSpace/Filter/Decode/DecodeParms/
+// ImageMask/Interpolate. The abbreviated colour-space (/G /RGB /CMYK /I) and
+// filter (/Fl /DCT /CCF …) *values* are already accepted downstream, so they
+// pass through untouched — except a /CS that names an entry in the page's
+// /Resources /ColorSpace, which is resolved to that colour-space object.
+foundation::objects::Dict ExpandInlineImageHeader(
+        const foundation::objects::Dict& in,
+        const Dump& dump,
+        const foundation::objects::Dict* resources) {
+    auto full_key = [](const std::string& k) -> const char* {
+        if (k == "W") return "Width";
+        if (k == "H") return "Height";
+        if (k == "BPC") return "BitsPerComponent";
+        if (k == "CS") return "ColorSpace";
+        if (k == "F") return "Filter";
+        if (k == "D") return "Decode";
+        if (k == "DP") return "DecodeParms";
+        if (k == "IM") return "ImageMask";
+        if (k == "I") return "Interpolate";
+        return nullptr;
+    };
+    foundation::objects::Dict out;
+    for (const auto& entry : in.entries) {
+        std::string key = entry.first;
+        if (const char* fk = full_key(entry.first)) key = fk;
+
+        // A /CS that is a bare name not naming a device space may name an
+        // entry in /Resources /ColorSpace (§8.9.5.1). Substitute the
+        // referenced colour-space object so ResolveColorSpace can read it.
+        if (key == "ColorSpace") {
+            if (const auto* nm =
+                    std::get_if<std::string>(&entry.second.v)) {
+                const bool device =
+                    *nm == "DeviceRGB" || *nm == "RGB" ||
+                    *nm == "DeviceGray" || *nm == "G" ||
+                    *nm == "DeviceCMYK" || *nm == "CMYK";
+                if (!device && resources) {
+                    if (const auto* csd = DictGet(*resources, "ColorSpace")) {
+                        if (const auto* csr = Resolve(dump, *csd)) {
+                            if (const auto* csdict = std::get_if<
+                                    foundation::objects::Dict>(&csr->v)) {
+                                if (const auto* named =
+                                        DictGet(*csdict, *nm)) {
+                                    out.entries.emplace_back(key, *named);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out.entries.emplace_back(std::move(key), entry.second);
+    }
+    return out;
 }
 
 // Maximum tiling-pattern nesting (a pattern whose content paints
@@ -2919,8 +2988,11 @@ void FillWithPattern(
 
     // Pattern content + its own resources.
     Stream pcs;
+    // Kept alive for the whole tile loop below: an inline image (§8.9.7) in
+    // `pcs` carries a Stream operand spanning into these bytes.
+    std::vector<std::byte> body;
     try {
-        const auto body = DecodeStream(pdf_bytes, *pat);
+        body = DecodeStream(pdf_bytes, *pat);
         if (body.empty()) return;
         pcs = foundation::content_stream::Parse(
             std::span<const std::byte>(body.data(), body.size()));
@@ -3109,8 +3181,12 @@ void RenderFormStream(
     const Matrix form_ctm = Compose(ReadMatrix(dump, st.header),
                                     base_ctm);
     Stream fcs;
+    // `body` outlives the parse: any inline image (§8.9.7) in `fcs` carries a
+    // Stream operand whose body is a span into these bytes, read later by
+    // RenderContentImpl. A try-local buffer would dangle.
+    std::vector<std::byte> body;
     try {
-        const auto body = DecodeStream(pdf_bytes, st);
+        body = DecodeStream(pdf_bytes, st);
         if (body.empty()) return;
         fcs = foundation::content_stream::Parse(
             std::span<const std::byte>(body.data(), body.size()));
@@ -3649,6 +3725,24 @@ void RenderContentImpl(
                                       pdf_bytes, dump, resources,
                                       depth);
                 }
+            }
+        }
+        else if (name == "INLINE_IMAGE" && a.size() == 1) {
+            // §8.9.7 inline image: content_stream carries it as a Stream
+            // operand (header = inline param dict, body = raw samples).
+            // Expand the abbreviated keys, then decode + composite through
+            // the same base-image path as /Do, at the current CTM.
+            const auto* st = std::get_if<
+                foundation::objects::Stream>(&a[0].v);
+            if (st) {
+                foundation::objects::Stream expanded;
+                expanded.header =
+                    ExpandInlineImageHeader(st->header, dump, resources);
+                expanded.body = st->body;
+                const ResolvedImage img = BuildResolvedImageBase(
+                    pdf_bytes, dump, expanded);
+                CompositeResolvedImage(dst, state.ctm, img,
+                                       state.fill_alpha, clip_ptr());
             }
         }
         // Tr / J / j / M / d0 / d1 silently consumed —

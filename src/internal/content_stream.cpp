@@ -292,8 +292,15 @@ std::size_t FindInlineImageEnd(std::span<const std::byte> input,
 }
 
 // Copy `input`, dropping the raw sample bytes between every inline-image
-// `ID` operator and its `EI` delimiter. The result lexes cleanly.
-std::vector<std::byte> StripInlineImageData(std::span<const std::byte> in) {
+// `ID` operator and its `EI` delimiter. The result lexes cleanly. Each
+// dropped sample run is also recorded in `ranges` as a [start, end) byte
+// offset into the ORIGINAL `in` (the §8.9.7 single-whitespace separators
+// after `ID` and before `EI` trimmed), in stream order, so Parse can
+// re-attach the samples as an inline-image Stream body without re-lexing
+// the binary.
+std::vector<std::byte> StripInlineImageData(
+        std::span<const std::byte> in,
+        std::vector<std::pair<std::size_t, std::size_t>>& ranges) {
     std::vector<std::byte> out;
     out.reserve(in.size());
     enum { kNormal, kString, kHex, kComment } state = kNormal;
@@ -337,9 +344,23 @@ std::vector<std::byte> StripInlineImageData(std::span<const std::byte> in) {
                            || in[i - 1] == std::byte{'>'})
                        && (i + 2 >= in.size() || IsContentWs(in[i + 2]))) {
                 // Inline-image data operator. Keep `ID`, drop the samples,
-                // re-emit a clean `EI` so both lex as operators.
+                // re-emit a clean `EI` so both lex as operators. Record the
+                // dropped sample run [data_start, data_end) into `in` so
+                // Parse can re-attach it as the image's Stream body.
                 out.push_back(in[i]); out.push_back(in[i + 1]);
                 const std::size_t ei_end = FindInlineImageEnd(in, i + 2);
+                std::size_t data_start = i + 2;
+                // One mandatory whitespace separates `ID` from the samples.
+                if (data_start < in.size() && IsContentWs(in[data_start]))
+                    ++data_start;
+                // ei_end is just past `EI`; back up to the `E`, then drop the
+                // single whitespace the delimiter rule requires before it.
+                std::size_t data_end =
+                    (ei_end >= 2) ? ei_end - 2 : data_start;
+                if (data_end > data_start && IsContentWs(in[data_end - 1]))
+                    --data_end;
+                if (data_end < data_start) data_end = data_start;
+                ranges.emplace_back(data_start, data_end);
                 out.push_back(std::byte{' '});
                 out.push_back(std::byte{'E'});
                 out.push_back(std::byte{'I'});
@@ -625,12 +646,17 @@ Stream Parse(std::span<const std::byte> input) {
     // raw binary, not PDF tokens, and would otherwise derail the lexer
     // (and hence the parser). `cleaned` outlives the parse; operand
     // values and operator names are copied out, so nothing dangles.
-    const std::vector<std::byte> cleaned = StripInlineImageData(input);
+    std::vector<std::pair<std::size_t, std::size_t>> inline_ranges;
+    const std::vector<std::byte> cleaned =
+        StripInlineImageData(input, inline_ranges);
     Lexer lex(std::span<const std::byte>(cleaned.data(), cleaned.size()));
     TokenCursor cursor(lex.Lex());
 
     Stream stream;
     std::vector<objects::Value> operands;
+    // Index into `inline_ranges`, advanced as each `BI` is consumed; the
+    // ranges are in the same stream order the loop encounters the images.
+    std::size_t inline_idx = 0;
 
     // Pattern-A cursor ownership: top-level loop PEEKs to
     // classify; ParseValue owns Next() for operand tokens.
@@ -670,9 +696,82 @@ Stream Parse(std::span<const std::byte> input) {
                     continue;
                 }
             }
-            // Inline images (§8.9.7) are handled before lexing by
-            // StripInlineImageData, so `BI` / `ID` / `EI` arrive here as
-            // ordinary operators with the sample bytes already removed.
+            // Inline images (§8.9.7). StripInlineImageData removed the raw
+            // sample bytes before lexing, so the token stream is
+            // `BI <name/value pairs> ID EI`. Collect the parameter dict and
+            // re-attach the dropped samples (recorded in `inline_ranges`,
+            // spans into `input`) as a single INLINE_IMAGE operation whose
+            // lone operand is a Stream {header = inline dict, body = samples}.
+            // Abbreviation expansion (W→Width, /Fl→FlateDecode, …) and
+            // decoding/rendering are the consumer's job — the parser carries
+            // the inline image verbatim.
+            if (kw == "BI") {
+                cursor.Next();  // consume BI
+                objects::Dict idict;
+                bool saw_id = false;
+                while (!cursor.AtEnd()) {
+                    Token p = cursor.Peek();
+                    if (p.kind == TokenKind::Eof) break;
+                    if (p.kind == TokenKind::Keyword) {
+                        std::string_view k(
+                            reinterpret_cast<const char*>(p.bytes.data()),
+                            p.bytes.size());
+                        cursor.Next();  // consume the keyword
+                        if (k == "ID") { saw_id = true; break; }
+                        if (k == "EI") break;  // ID-less / malformed
+                        continue;  // stray keyword in dict position — skip
+                    }
+                    if (p.kind != TokenKind::Name) {
+                        ParseValue(cursor);  // skip a stray value
+                        continue;
+                    }
+                    // Key (Name) — strip the leading '/' and decode #XX.
+                    Token key_token = cursor.Next();
+                    std::string key_str;
+                    if (!key_token.bytes.empty()
+                        && key_token.bytes[0] == std::byte{'/'}) {
+                        key_str = std::string(
+                            reinterpret_cast<const char*>(
+                                key_token.bytes.data() + 1),
+                            key_token.bytes.size() - 1);
+                    } else {
+                        key_str = std::string(
+                            reinterpret_cast<const char*>(
+                                key_token.bytes.data()),
+                            key_token.bytes.size());
+                    }
+                    std::string decoded_key = DecodeNameBody(
+                        std::span<const std::byte>(
+                            reinterpret_cast<const std::byte*>(
+                                key_str.data()),
+                            key_str.size()));
+                    objects::Value val = ParseValue(cursor);
+                    idict.entries.emplace_back(std::move(decoded_key),
+                                               std::move(val));
+                }
+                objects::Stream img;
+                img.header = std::move(idict);
+                if (inline_idx < inline_ranges.size()) {
+                    const auto [s, e] = inline_ranges[inline_idx++];
+                    img.body = input.subspan(s, e - s);
+                }
+                std::vector<objects::Value> img_ops;
+                img_ops.push_back(objects::Value{std::move(img)});
+                stream.operations.push_back(
+                    {std::string("INLINE_IMAGE"), std::move(img_ops)});
+                operands.clear();
+                // Consume the trailing EI that StripInlineImageData re-emitted.
+                if (saw_id && !cursor.AtEnd()) {
+                    Token p = cursor.Peek();
+                    if (p.kind == TokenKind::Keyword) {
+                        std::string_view k(
+                            reinterpret_cast<const char*>(p.bytes.data()),
+                            p.bytes.size());
+                        if (k == "EI") cursor.Next();
+                    }
+                }
+                continue;
+            }
             // Regular operator — consume keyword, flush operands.
             cursor.Next();
             std::string op(kw.begin(), kw.end());

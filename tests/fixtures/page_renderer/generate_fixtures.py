@@ -1312,6 +1312,36 @@ def build_content_ascii85_flate() -> None:
     _write(HERE / "content_ascii85_flate.pdf", _build(objects, trailer))
 
 
+def build_inline_image() -> None:
+    """100x100pt page whose content stream draws a §8.9.7 inline image
+    (BI / ID / EI): a 1x1 DeviceRGB red pixel scaled by the CTM to cover
+    the whole page. A renderer that drops inline-image samples leaves the
+    page white (field reproducer 33433.pdf, a single page-filling inline
+    image). Discriminator: centre (50,50) is red. Uses abbreviated keys
+    (/W /H /CS /BPC) and the /RGB colour-space abbreviation to exercise
+    the renderer's expansion of inline-image abbreviations."""
+    # Unit image square mapped to the 100x100 page; one RGB sample = red.
+    cs = (
+        b"q\n"
+        b"100 0 0 100 0 0 cm\n"
+        b"BI /W 1 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00 EI\n"
+        b"Q\n"
+    )
+    contents_obj = (
+        b"<< /Length " + str(len(cs)).encode() + b" >>\nstream\n"
+        + cs + b"\nendstream"
+    )
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+        b"/Contents 4 0 R /Resources << >> >>",
+        contents_obj,
+    ]
+    trailer = b" /Size 5 /Root 1 0 R "
+    _write(HERE / "inline_image.pdf", _build(objects, trailer))
+
+
 def main() -> None:
     print(f"Generating page_renderer fixtures into {HERE}/:")
     build_blank()
@@ -1336,6 +1366,7 @@ def main() -> None:
     build_separation_fill()
     build_ccitt_decode_pair()
     build_content_ascii85_flate()
+    build_inline_image()
     print(
         f"\nGenerating .pixels sidecars (mutool draw + "
         f"pdftocairo @ {SIDECAR_DPI:g} DPI, blended):")
