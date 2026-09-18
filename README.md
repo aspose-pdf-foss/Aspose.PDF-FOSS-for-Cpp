@@ -44,15 +44,15 @@ flowchart TD
     direction LR
     subgraph capl[" "]
       direction TB
-      c1["Open, edit, and save existing PDF documents, including password-protected files"]
+      c1["Open, edit, and save existing PDF documents"]
       c2["Text extraction with TextAbsorber and TextFragmentAbsorber"]
-      c3["Render pages to raster images with PngDevice, JpegDevice, BmpDevice, and TiffDevice"]
+      c3["Render pages to raster images (PNG, JPEG, BMP, TIFF)"]
       c4["Encrypt and decrypt with RC4-40/128 and AES-128/256"]
       c5["Digital signatures via a detached PKCS#7 signature"]
     end
     subgraph capr[" "]
       direction TB
-      c6["Document creation from scratch: text, tables, vector graphics, and watermarks"]
+      c6["Author new PDF documents from scratch"]
       c7["Annotations across a gallery of subtypes"]
       c8["AcroForm fields and form flattening"]
       c9["Outlines, named destinations, and embedded files"]
@@ -122,8 +122,8 @@ flowchart TD
 
 ## Installation
 
-No prebuilt package has been published for this library yet — it builds as a static library you
-link into your project. Add it as a subdirectory of your CMake build:
+This library builds as a static library you link into your project. Add it as a subdirectory of
+your CMake build:
 
 ```cmake
 add_subdirectory(aspose.pdf-foss-for-cpp)
@@ -161,6 +161,12 @@ configure step. `CMakePresets.json` also carries host-conditional Windows-MSVC p
   (`find_package(Python3 REQUIRED COMPONENTS Interpreter)` in `CMakeLists.txt`) to run a
   generator script that embeds the bundled Standard-14 font outlines into a generated source
   file; needed only to configure/build the library, not by the compiled library at runtime.
+
+### Development Dependencies
+
+- `googletest` (1.14.0) — fetched via CMake FetchContent in `CMakeLists.txt`; builds the
+  `aspose_pdf_foss_tests` ctest binary only, never linked into the shipped `aspose_pdf_foss`
+  library.
 
 ## Quick Start
 
