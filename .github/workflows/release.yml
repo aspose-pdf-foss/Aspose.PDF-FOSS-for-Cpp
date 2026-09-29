@@ -204,7 +204,7 @@ jobs:
           fi
           ls -l ../dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PKG }}
           path: dist/*
@@ -236,7 +236,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag') { $version = $env:GITHUB_REF_NAME.TrimStart('v') }
           ./nuget/pack.ps1 -Version $version -OutputDir dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nuget-package
           path: dist/*.nupkg
@@ -258,7 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -314,7 +314,7 @@ jobs:
       name: nuget-org
       url: https://www.nuget.org/packages/Aspose.PDF.Cpp.FOSS
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: nuget-package
           path: nupkg
