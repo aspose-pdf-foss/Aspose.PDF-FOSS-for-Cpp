@@ -5,12 +5,13 @@ name: Release
 # tree, smoke-tests each package as a find_package() consumer, builds
 # the Aspose.PDF.Cpp.FOSS NuGet package (x64/x86/ARM64, tested as a
 # Visual Studio consumer), and creates a DRAFT GitHub Release with the
-# archives, the .nupkg and SHA256SUMS.txt attached. Review the draft on
-# GitHub and press "Publish release".
+# archives, the .nupkg and SHA256SUMS.txt attached.
 #
-# The nuget.org push (publish-nuget) waits for approval in the
-# `nuget-org` environment; approve it after publishing the GitHub
-# release.
+# The .nupkg attached to the draft is UNSIGNED. nuget.org requires
+# packages under the reserved "Aspose." prefix to be signed with the
+# Aspose code-signing certificate, so signing and the nuget.org push are
+# done by Aspose's internal release pipeline, which replaces the draft's
+# .nupkg with the signed one. Publish the GitHub release only after that.
 #
 # Running the workflow by hand (Actions → Release → Run workflow) on a
 # branch is a dry run: packages are built and uploaded as workflow
@@ -299,35 +300,3 @@ jobs:
             if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
             gh release create "$TAG" dist/* "${flags[@]}"
           fi
-
-  # Pushes the .nupkg to nuget.org. Runs in the `nuget-org` environment:
-  # configure it (Settings → Environments) with required reviewers so each
-  # publish waits for manual approval, and store the nuget.org API key as
-  # the environment secret NUGET_API_KEY. A version pushed to nuget.org
-  # cannot be deleted, only unlisted.
-  publish-nuget:
-    name: Publish to nuget.org
-    needs: [prepare, release]
-    if: needs.prepare.outputs.is_release == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: nuget-org
-      url: https://www.nuget.org/packages/Aspose.PDF.Cpp.FOSS
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: nuget-package
-          path: nupkg
-
-      - name: Push
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${NUGET_API_KEY}" ]; then
-            echo "::error::Secret NUGET_API_KEY is not set for the nuget-org environment"; exit 1
-          fi
-          dotnet nuget push nupkg/*.nupkg \
-            --api-key "${NUGET_API_KEY}" \
-            --source https://api.nuget.org/v3/index.json \
-            --skip-duplicate

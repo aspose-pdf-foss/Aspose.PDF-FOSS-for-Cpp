@@ -100,12 +100,17 @@ pre-release). The version follows [Semantic Versioning](https://semver.org).
    tree, and compiles and runs `.github/package-test` against every
    package. It also builds the NuGet package (see below). It then creates
    a **draft** GitHub release with the archives, the `.nupkg`, and
-   `SHA256SUMS.txt` attached. Review the draft on GitHub and press
-   *Publish release*.
-7. **Publish on nuget.org.** The `publish-nuget` job waits for approval
-   in the `nuget-org` environment. Approve it in the workflow run once the
-   GitHub release is published. A version pushed to nuget.org cannot be
+   `SHA256SUMS.txt` attached. Review the draft, but **do not publish it
+   yet**: its `.nupkg` is unsigned.
+7. **Sign and publish on nuget.org.** nuget.org requires packages under
+   the reserved `Aspose.` prefix to be signed with the Aspose
+   code-signing certificate, which is only available to Aspose's internal
+   release pipeline. That pipeline takes the tag, downloads the `.nupkg`
+   from the draft, signs and verifies it, replaces the draft's `.nupkg`
+   and its `SHA256SUMS.txt` line with the signed package, and pushes the
+   same bytes to nuget.org. A version pushed to nuget.org cannot be
    deleted, only unlisted.
+8. **Publish on GitHub.** Press *Publish release* on the draft.
 
 Re-running the workflow for an existing tag replaces the release's assets
 and leaves its notes unchanged. nuget.org skips a version that has already
@@ -138,17 +143,11 @@ ARM64 C++ build tools, CMake, and Python 3 are required):
 The script writes `build/nuget/out/Aspose.PDF.Cpp.FOSS.<version>.nupkg`
 and verifies it by building `PackageConsumer.vcxproj` against the packed
 package for every platform and configuration. It runs the result wherever
-the host can; ARM64 is build-only on x64 hosts. To publish by hand:
+the host can; ARM64 is build-only on x64 hosts.
 
-```powershell
-dotnet nuget push build/nuget/out/Aspose.PDF.Cpp.FOSS.<version>.nupkg `
-  --api-key <key> --source https://api.nuget.org/v3/index.json
-```
-
-One-time setup for automated publishing, under repository **Settings →
-Environments**:
-
-1. Create the environment `nuget-org` and add required reviewers.
-2. Add the environment secret `NUGET_API_KEY`: a nuget.org API key scoped
-   to *Push* for the package `Aspose.PDF.Cpp.FOSS`, created from the
-   nuget.org account that owns the reserved `Aspose.` ID prefix.
+Packages built here are unsigned. nuget.org accepts `Aspose.PDF.Cpp.FOSS`
+only when it is signed with the Aspose code-signing certificate, so
+publishing always goes through Aspose's internal release pipeline (see
+*Releasing*, step 7). The pipeline needs a GitHub token with *Contents:
+Read and write* on this repository to read the draft release and replace
+its `.nupkg`.
