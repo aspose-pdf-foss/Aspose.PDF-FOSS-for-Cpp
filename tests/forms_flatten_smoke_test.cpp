@@ -11,6 +11,8 @@
 #include <string>
 
 #include <aspose/pdf/document.hpp>
+#include <aspose/pdf/forms/checkbox_field.hpp>
+#include <aspose/pdf/forms/field.hpp>
 #include <aspose/pdf/forms/form.hpp>
 #include <aspose/pdf/forms/text_box_field.hpp>
 #include <aspose/pdf/rectangle.hpp>
@@ -20,6 +22,8 @@
 namespace {
 
 using namespace Aspose::Pdf;
+using Aspose::Pdf::Forms::CheckboxField;
+using Aspose::Pdf::Forms::Field;
 using Aspose::Pdf::Forms::TextBoxField;
 
 std::filesystem::path FixtureRoot() {
@@ -52,6 +56,26 @@ bool Has(const std::string& s, const std::string& needle) {
     return s.find(needle) != std::string::npos;
 }
 
+void WriteFile(const std::string& path, const std::string& bytes) {
+    std::ofstream out(path, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+std::string ReplaceAll(std::string s, const std::string& from,
+                       const std::string& to) {
+    for (std::size_t pos = 0;
+         (pos = s.find(from, pos)) != std::string::npos; pos += to.size())
+        s.replace(pos, from.size(), to);
+    return s;
+}
+
+Field* FieldByName(Document& doc, const std::string& name) {
+    for (Field* f : doc.Form().Fields()) {
+        if (f != nullptr && f->PartialName() == name) return f;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 TEST(FormsFlatten, FlattenEmptiesFormForUser) {
@@ -78,4 +102,54 @@ TEST(FormsFlatten, FlattenedNewFieldIsWrittenBeforeRemoval) {
     Document re{out};
     EXPECT_EQ(re.Form().Count(), 0);
     std::filesystem::remove(out);
+}
+
+TEST(FormsFlatten, EditedLoadedTextFieldGetsNewAppearance) {
+    const std::string out = TmpPath("edit1");
+    const std::string out2 = TmpPath("edit2");
+    {
+        Document doc{HelloWorldPdf()};
+        TextBoxField tb{doc, Rect(100, 700, 300, 720)};
+        tb.Value("Old");
+        doc.Form().Add(tb, "name", 1);
+        doc.Save(out);
+    }
+    {
+        Document re{out};
+        Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        f->Value("New");
+        re.Save(out2);
+    }
+    EXPECT_TRUE(Has(ReadFile(out2), "(New) Tj"));
+    std::filesystem::remove(out);
+    std::filesystem::remove(out2);
+}
+
+TEST(FormsFlatten, EditedLoadedCheckboxKeepsItsOnStateName) {
+    const std::string out = TmpPath("chk1");
+    const std::string out2 = TmpPath("chk2");
+    {
+        Document doc{HelloWorldPdf()};
+        CheckboxField cb{doc, Rect(100, 560, 120, 580)};
+        doc.Form().Add(cb, "agree", 1);
+        doc.Save(out);
+    }
+    // Rename the on-state from /Yes to /Chk (same length keeps the xref
+    // offsets valid), as a file authored by another tool might.
+    const std::string original = ReadFile(out);
+    ASSERT_TRUE(Has(original, "/Yes"));
+    WriteFile(out, ReplaceAll(original, "/Yes", "/Chk"));
+    {
+        Document re{out};
+        auto* cb = dynamic_cast<CheckboxField*>(FieldByName(re, "agree"));
+        ASSERT_NE(cb, nullptr);
+        cb->Checked(true);
+        re.Save(out2);
+    }
+    const std::string saved = ReadFile(out2);
+    EXPECT_TRUE(Has(saved, "/AS /Chk"));
+    EXPECT_FALSE(Has(saved, "/AS /Yes"));
+    std::filesystem::remove(out);
+    std::filesystem::remove(out2);
 }
