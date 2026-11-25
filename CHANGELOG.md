@@ -43,6 +43,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- `TextAbsorber` and `TextDevice` now extract text drawn inside Form XObjects (`/Name Do`), such as
+  page headers from many PDF producers and form fields or annotations burned in by `Flatten`. Line
+  breaks follow the real position on the page (`cm` and the form's `/Matrix`).
 - Text field appearances now follow the field's settings instead of a fixed one-line Helvetica
   12 pt:
   - New fields use their `DefaultAppearance` font and size (size 0 = auto-fit) and
