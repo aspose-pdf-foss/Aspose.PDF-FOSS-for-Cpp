@@ -40,7 +40,7 @@ namespace Aspose::Pdf {
 class Document;
 class Page;
 }
-namespace Aspose::Pdf::Facades { class PdfAnnotationEditor; }
+namespace Aspose::Pdf::Facades { class PdfAnnotationEditor; class FormEditor; }
 
 namespace Aspose::Pdf::Forms {
 
@@ -212,6 +212,19 @@ private:
     // with HideButtons: the Flatten() pass drops push buttons undrawn.
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
     bool flatten_hide_buttons_ = false;
+    // Action edits made through FormEditor (written to the widgets' /A on
+    // Save): drop existing actions, replace or append JavaScript, submit
+    // the form to a URL with flags.
+    struct ActionEdit {
+        bool clear = false;
+        bool has_script = false;   // `script` replaces the existing one
+        std::string script;
+        std::vector<std::string> appends;  // appended to the script
+        std::string submit_url;            // non-empty: SubmitForm action
+        int submit_flags = -1;             // -1: unchanged
+    };
+    std::map<const Field*, ActionEdit> action_edits_;
+    friend class Aspose::Pdf::Facades::FormEditor;
 
     std::vector<Field*> fields_;
     // 1-based page number a newly-added field's widget belongs on, recorded

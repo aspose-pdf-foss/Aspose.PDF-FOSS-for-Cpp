@@ -269,11 +269,51 @@ Aspose::Pdf::Annotations::AnnotationFlags FormEditor::GetFieldAppearance(
                         : f->Flags();
 }
 
-bool FormEditor::SetSubmitFlag(const std::string&, SubmitFormFlag) {
-    return false;
+namespace {
+
+// PDF SubmitForm /Flags (§12.7.6.2, table 237) for a SubmitFormFlag.
+int SubmitFlags(SubmitFormFlag f) {
+    switch (f) {
+        case SubmitFormFlag::Html: return 1 << 2;              // ExportFormat
+        case SubmitFormFlag::Xfdf: return 1 << 5;              // XFDF
+        case SubmitFormFlag::FdfWithComments: return 1 << 7;   // IncludeAnnotations
+        case SubmitFormFlag::XfdfWithComments: return (1 << 5) | (1 << 7);
+        case SubmitFormFlag::Pdf: return 1 << 8;               // SubmitPDF
+        case SubmitFormFlag::Fdf:
+        default: return 0;
+    }
 }
-bool FormEditor::SetSubmitUrl(const std::string&, const std::string&) {
-    return false;
+
+// The push button `name` (not a check box or radio), or nullptr.
+Aspose::Pdf::Forms::ButtonField* FindButton(Aspose::Pdf::Document* doc,
+                                            const std::string& name) {
+    if (doc == nullptr) return nullptr;
+    for (auto* f : doc->Form().Fields())
+        if (f != nullptr && f->PartialName() == name)
+            return dynamic_cast<Aspose::Pdf::Forms::ButtonField*>(f);
+    return nullptr;
+}
+
+}  // namespace
+
+bool FormEditor::SetSubmitFlag(const std::string& fieldName,
+                               SubmitFormFlag flag) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    auto* b = FindButton(doc, fieldName);
+    if (b == nullptr) return false;
+    doc->Form().action_edits_[b].submit_flags = SubmitFlags(flag);
+    return true;
+}
+
+bool FormEditor::SetSubmitUrl(const std::string& fieldName,
+                              const std::string& url) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    auto* b = FindButton(doc, fieldName);
+    if (b == nullptr || url.empty()) return false;
+    auto& e = doc->Form().action_edits_[b];
+    e.submit_url = url;
+    if (e.submit_flags < 0) e.submit_flags = SubmitFlags(submit_flag_);
+    return true;
 }
 
 bool FormEditor::SetFieldLimit(const std::string& fieldName, int fieldLimit) {
@@ -303,11 +343,25 @@ bool FormEditor::MoveField(const std::string& fieldName, float llx, float lly,
     return true;
 }
 
-bool FormEditor::SetFieldScript(const std::string&, const std::string&) {
-    return false;
+bool FormEditor::SetFieldScript(const std::string& fieldName,
+                                const std::string& script) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    auto* b = FindButton(doc, fieldName);
+    if (b == nullptr) return false;
+    auto& e = doc->Form().action_edits_[b];
+    e.has_script = true;
+    e.script = script;
+    e.appends.clear();
+    return true;
 }
-bool FormEditor::AddFieldScript(const std::string&, const std::string&) {
-    return false;
+
+bool FormEditor::AddFieldScript(const std::string& fieldName,
+                                const std::string& script) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    auto* b = FindButton(doc, fieldName);
+    if (b == nullptr) return false;
+    doc->Form().action_edits_[b].appends.push_back(script);
+    return true;
 }
 
 bool FormEditor::Single2Multiple(const std::string& fieldName) {
@@ -495,10 +549,30 @@ void FormEditor::RenameField(const std::string& fieldName,
         f->PartialName(newFieldName);
 }
 
-void FormEditor::RemoveFieldAction(const std::string&) {}
-void FormEditor::AddSubmitBtn(const std::string&, int, const std::string&,
-                              const std::string&, float, float, float,
-                              float) {}
+void FormEditor::RemoveFieldAction(const std::string& fieldName) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    if (Field* f = FindField(doc, fieldName)) {
+        Aspose::Pdf::Forms::Form::ActionEdit e;
+        e.clear = true;
+        doc->Form().action_edits_[f] = e;
+    }
+}
+
+void FormEditor::AddSubmitBtn(const std::string& fieldName, int pageNum,
+                              const std::string& buttonName,
+                              const std::string& url, float llx, float lly,
+                              float urx, float ury) {
+    Aspose::Pdf::Document* doc = EnsureDoc();
+    if (doc == nullptr) return;
+    auto btn = std::make_unique<Aspose::Pdf::Forms::ButtonField>(
+        *doc, Aspose::Pdf::Rectangle(llx, lly, urx, ury, true));
+    btn->NormalCaption(buttonName);
+    doc->Form().Add(*btn, fieldName, pageNum);
+    auto& e = doc->Form().action_edits_[btn.get()];
+    e.submit_url = url;
+    e.submit_flags = SubmitFlags(submit_flag_);
+    owned_fields_.push_back(std::move(btn));
+}
 
 void FormEditor::AddListItem(const std::string& fieldName,
                              const std::string& item) {

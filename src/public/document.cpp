@@ -7832,6 +7832,91 @@ void ApplyFieldAttrs(foundation::objects::Dict& d,
     }
 }
 
+// Apply FormEditor action edits to widget `w`'s /A: drop existing
+// actions, set / append JavaScript (appends follow the existing /A
+// JavaScript), and make /A a SubmitForm action to a URL (the script, if
+// any, chained as its /Next).
+// A copy of Form's (private) ActionEdit, built by Document.
+struct ActionEditView {
+    bool clear;
+    bool has_script;
+    std::string script;
+    std::vector<std::string> appends;
+    std::string submit_url;
+    int submit_flags;
+};
+
+template <class Edit>
+ActionEditView ViewOf(const Edit& e) {
+    return {e.clear, e.has_script, e.script, e.appends, e.submit_url,
+            e.submit_flags};
+}
+
+void ApplyActionEdit(foundation::objects::Dict& w, const ActionEditView& e,
+                     const foundation::objects::Dump* dump) {
+    namespace fo = foundation::objects;
+    auto str_value = [](const std::string& s) {
+        fo::String ps; ps.bytes = EncodePdfString(s);
+        ps.kind = fo::StringKind::Literal;
+        fo::Value v; v.v = std::move(ps); return v;
+    };
+    fo::Dict old_a;
+    if (const auto* av = DictGet(w, "A")) {
+        if (const auto* d = std::get_if<fo::Dict>(&av->v)) old_a = *d;
+        else if (dump != nullptr) old_a = ResolveDictCopy(*av, *dump);
+    }
+    const std::string old_kind = ReadStrOrName(DictGet(old_a, "S"));
+    std::string script;
+    if (!e.clear && old_kind == "JavaScript")
+        script = ReadStrOrName(DictGet(old_a, "JS"));
+    if (e.has_script) script = e.script;
+    for (const auto& a : e.appends)
+        script = script.empty() ? a : script + "\n" + a;
+    if (e.clear) {
+        EraseDictKey(w, "A");
+        EraseDictKey(w, "AA");
+    }
+    fo::Dict js;
+    if (!script.empty()) {
+        js.entries.emplace_back("S", PageNameValue("JavaScript"));
+        js.entries.emplace_back("JS", str_value(script));
+    }
+    std::string url = e.submit_url;
+    int flags = e.submit_flags;
+    if (url.empty() && old_kind == "SubmitForm" && !e.clear) {
+        // Keep the existing submit target; update its flags if asked.
+        fo::Dict sub = old_a;
+        if (flags >= 0) {
+            fo::Value fv; fv.v = static_cast<std::int64_t>(flags);
+            SetDictKey(sub, "Flags", std::move(fv));
+        }
+        fo::Value v; v.v = std::move(sub);
+        SetDictKey(w, "A", std::move(v));
+        return;
+    }
+    if (!url.empty()) {
+        fo::Dict fs;
+        fs.entries.emplace_back("FS", PageNameValue("URL"));
+        fs.entries.emplace_back("F", str_value(url));
+        fo::Dict sub;
+        sub.entries.emplace_back("S", PageNameValue("SubmitForm"));
+        { fo::Value v; v.v = std::move(fs); sub.entries.emplace_back("F", std::move(v)); }
+        { fo::Value v; v.v = static_cast<std::int64_t>(flags < 0 ? 0 : flags);
+          sub.entries.emplace_back("Flags", std::move(v)); }
+        if (!js.entries.empty()) {
+            fo::Value v; v.v = std::move(js);
+            sub.entries.emplace_back("Next", std::move(v));
+        }
+        fo::Value v; v.v = std::move(sub);
+        SetDictKey(w, "A", std::move(v));
+    } else if (!js.entries.empty()) {
+        fo::Value v; v.v = std::move(js);
+        SetDictKey(w, "A", std::move(v));
+    } else if (e.has_script) {
+        EraseDictKey(w, "A");
+    }
+}
+
 // Write a loaded field's widget-level attributes into widget `w`: /F, and
 // /Rect when `with_rect` (and the field's rectangle is not empty).
 void ApplyWidgetAttrs(foundation::objects::Dict& w,
@@ -9651,7 +9736,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         if (vit == form_->loaded_values_.end() ||
             vit->second != FieldEffectiveValue(fp) ||
             (atit != form_->loaded_attrs_.end() &&
-             atit->second != FieldAttrsKey(fp))) {
+             atit->second != FieldAttrsKey(fp)) ||
+            form_->action_edits_.count(fp)) {
             modified_loaded.push_back(fp);
         }
     }
@@ -9824,6 +9910,9 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         ApplyFieldAttrs(d, fp, &loaded_dr_faces);
         const bool merged_widget = DictGet(d, "Kids") == nullptr;
         if (merged_widget) ApplyWidgetAttrs(d, fp, true);
+        const auto action_edit = form_->action_edits_.find(fp);
+        if (merged_widget && action_edit != form_->action_edits_.end())
+            ApplyActionEdit(d, ViewOf(action_edit->second), &dump);
         bool first_kid = true;
         auto widget_on = [&](const std::string& state) {
             if (check != nullptr) return check->Checked();
@@ -9847,6 +9936,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
                     foundation::objects::Dict kw = *kd;
                     ApplyWidgetAttrs(kw, fp, first_kid);
                     first_kid = false;
+                    if (action_edit != form_->action_edits_.end())
+                        ApplyActionEdit(kw, ViewOf(action_edit->second), &dump);
                     const std::string kstate = WidgetOnState(kw, dump);
                     refresh_widget_ap(kw, fp, kstate, widget_on(kstate));
                     foundation::pdf_writer_incremental::DirtyObject kdirty;
@@ -10025,6 +10116,9 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         { foundation::objects::Value v; v.v = std::move(bg);
           mk.entries.emplace_back("BG", std::move(v)); }
         wd.entries.emplace_back("MK", dict_v(std::move(mk)));
+        if (auto ae = form_->action_edits_.find(fp);
+                ae != form_->action_edits_.end())
+            ApplyActionEdit(wd, ViewOf(ae->second), nullptr);
     };
     // 1-based page number -> page object id (0 when out of range).
     auto page_id_of = [&](int page_num) -> std::uint32_t {
