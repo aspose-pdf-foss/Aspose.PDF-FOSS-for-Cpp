@@ -7696,6 +7696,16 @@ std::string FieldEffectiveValue(const Aspose::Pdf::Forms::Field* fp) {
     return fp->Value();
 }
 
+// Single-line vertical alignment of a text box for the layout engine:
+// 0 middle (default), 1 top, 2 bottom.
+int VAlignOf(const Aspose::Pdf::Forms::TextBoxField& tx) {
+    switch (tx.TextVerticalAlignment()) {
+        case Aspose::Pdf::VerticalAlignment::Top: return 1;
+        case Aspose::Pdf::VerticalAlignment::Bottom: return 2;
+        default: return 0;
+    }
+}
+
 // A loaded field's editable attributes as one comparable string: name,
 // field flags, text-box options, quadding, rectangle, annotation flags and
 // choice options. Snapshotted at load; a difference at Save means the field
@@ -7710,8 +7720,10 @@ std::string FieldAttrsKey(const Aspose::Pdf::Forms::Field* fp) {
     const auto& r = fp->Rect();
     k << r.LLX() << ' ' << r.LLY() << ' ' << r.URX() << ' ' << r.URY() << '\x1f';
     if (const auto* tx = dynamic_cast<const F::TextBoxField*>(fp))
-        k << tx->Multiline() << tx->ForceCombs() << ' ' << tx->MaxLen();
-    k << '\x1f';
+        k << tx->Multiline() << tx->ForceCombs() << ' ' << tx->MaxLen() << ' '
+          << VAlignOf(*tx);
+    k << '\x1f' << fp->DefaultAppearance().FontName() << ' '
+      << fp->DefaultAppearance().FontSize() << '\x1f';
     if (auto* ch = dynamic_cast<F::ChoiceField*>(const_cast<F::Field*>(fp))) {
         auto& opts = ch->Options();
         for (int i = 0; i < opts.Count(); ++i) k << opts[i].Value() << '\x1e';
@@ -7734,13 +7746,15 @@ void EraseDictKey(foundation::objects::Dict& d, const char* key) {
 }
 
 std::vector<std::string> ReadOptNames(const foundation::objects::Dict& d);
+std::string ReadStrOrName(const foundation::objects::Value* v);
 
 // Write a loaded field's field-level attributes into its object: /T, the
 // managed /Ff bits (read-only, required, no-export; multi-line and comb for
 // text boxes — other bits kept), /MaxLen, /Q, and /Opt when the option list
 // changed.
 void ApplyFieldAttrs(foundation::objects::Dict& d,
-                     Aspose::Pdf::Forms::Field* fp) {
+                     Aspose::Pdf::Forms::Field* fp,
+                     std::map<std::string, std::string>* dr_faces) {
     namespace F = Aspose::Pdf::Forms;
     {
         foundation::objects::String t;
@@ -7783,6 +7797,21 @@ void ApplyFieldAttrs(foundation::objects::Dict& d,
         SetDictKey(d, "Q", std::move(v));
     } else if (ha == Aspose::Pdf::HorizontalAlignment::Left) {
         EraseDictKey(d, "Q");
+    }
+    if (const auto& da = fp->DefaultAppearance(); !da.FontName().empty() &&
+                                                   !dynamic_cast<F::CheckboxField*>(fp)) {
+        // Keep the original colour; font and size from DefaultAppearance.
+        const auto face = foundation::field_appearance::MapFontName(da.FontName());
+        const auto old = foundation::field_appearance::ParseDa(
+            ReadStrOrName(DictGet(d, "DA")));
+        std::ostringstream o;
+        o << '/' << face.key << ' ' << da.FontSize() << " Tf " << old.color;
+        foundation::objects::String sv;
+        sv.bytes = EncodePdfString(o.str());
+        sv.kind = foundation::objects::StringKind::Literal;
+        foundation::objects::Value v; v.v = std::move(sv);
+        SetDictKey(d, "DA", std::move(v));
+        if (dr_faces != nullptr) (*dr_faces)[face.key] = face.base_font;
     }
     if (auto* ch = dynamic_cast<F::ChoiceField*>(fp)) {
         std::vector<std::string> names;
@@ -9637,6 +9666,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
     for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
 
     std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    // Fonts the /DA of edited loaded fields now name, added to /DR.
+    std::map<std::string, std::string> loaded_dr_faces;
 
     // ---- Widget appearance-stream support -----------------------------------
     // Acrobat does not regenerate field appearances (NeedAppearances=false), so
@@ -9738,6 +9769,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
                 if (auto* ch = dynamic_cast<F::ChoiceField*>(fp))
                     val = ch->Value();
                 FileTextStyle fs = FileFieldTextStyle(wd, dump, existing_acro);
+                if (auto* tx = dynamic_cast<F::TextBoxField*>(fp))
+                    fs.style.valign = VAlignOf(*tx);
                 if (fs.password ||
                     dynamic_cast<F::PasswordBoxField*>(fp) != nullptr)
                     val = std::string(val.size(), '*');
@@ -9788,7 +9821,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             dynamic_cast<F::RadioButtonField*>(fp) != nullptr;
         const std::string on_state = WidgetOnState(d, dump);
         ApplyFieldValue(d, fp, on_state);
-        ApplyFieldAttrs(d, fp);
+        ApplyFieldAttrs(d, fp, &loaded_dr_faces);
         const bool merged_widget = DictGet(d, "Kids") == nullptr;
         if (merged_widget) ApplyWidgetAttrs(d, fp, true);
         bool first_kid = true;
@@ -9833,7 +9866,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
 
     // When /Fields itself didn't change (only values edited), the AcroForm
     // dict stays untouched — the patched field objects above suffice.
-    if (!fields_changed) {
+    if (!fields_changed && loaded_dr_faces.empty()) {
         return foundation::pdf_writer_incremental::AppendIncremental(
             working_span,
             std::span<const foundation::pdf_writer_incremental::DirtyObject>(
@@ -9899,6 +9932,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             st.multiline = tx->Multiline();
             st.comb = tx->ForceCombs();
             st.max_len = tx->MaxLen();
+            st.valign = VAlignOf(*tx);
         }
         return st;
     };
@@ -10403,6 +10437,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         for (const auto& e : dr.entries)
             if (e.first == "Font") fonts = ResolveDictCopy(e.second, dump);
         std::map<std::string, std::string> want = dr_faces;
+        want.insert(loaded_dr_faces.begin(), loaded_dr_faces.end());
         want.emplace("Helv", "Helvetica");
         want.emplace("ZaDb", "ZapfDingbats");
         bool added = false;
@@ -10922,6 +10957,39 @@ Document::ReadSignaturesInternal() const {
         out.push_back(std::move(info));
     }
     return out;
+}
+
+}  // namespace Aspose::Pdf
+
+namespace Aspose::Pdf {
+
+int Document::FieldPageNumberInternal(const Forms::Field& field) const {
+    if (!form_) return 0;
+    if (auto it = form_->field_pages_.find(&field);
+            it != form_->field_pages_.end())
+        return it->second;
+    auto wit = form_->loaded_widget_ids_.find(&field);
+    if (wit == form_->loaded_widget_ids_.end() || wit->second.empty() || !tree_)
+        return 0;
+    foundation::objects::Dump dump;
+    try {
+        dump = foundation::objects::Parse(
+            std::span<const std::byte>(bytes_.data(), bytes_.size()));
+    } catch (const std::exception&) {
+        return 0;
+    }
+    const std::set<std::uint32_t> ids(wit->second.begin(), wit->second.end());
+    for (std::size_t i = 0; i < tree_->leaves.size(); ++i) {
+        const auto* po = FindObject(dump, tree_->leaves[i].id);
+        const auto* pd =
+            po ? std::get_if<foundation::objects::Dict>(&po->value.v) : nullptr;
+        if (pd == nullptr) continue;
+        for (const auto& a : PageAnnotsArray(*pd, dump).items)
+            if (const auto* r = std::get_if<foundation::objects::Ref>(&a.v);
+                    r != nullptr && ids.count(r->id))
+                return static_cast<int>(i + 1);
+    }
+    return 0;
 }
 
 }  // namespace Aspose::Pdf

@@ -17,7 +17,10 @@ void FormFieldFacade::BorderWidth(float value) noexcept {
 }
 
 FontStyle FormFieldFacade::Font() const noexcept { return font_; }
-void FormFieldFacade::Font(FontStyle value) noexcept { font_ = value; }
+void FormFieldFacade::Font(FontStyle value) noexcept {
+    font_ = value;
+    font_set_ = true;
+}
 
 const std::string& FormFieldFacade::CustomFont() const noexcept {
     return custom_font_;

@@ -91,16 +91,22 @@ public:
     void ResetInnerFacade();
     void CopyInnerField(const std::string& fieldName,
                         const std::string& newFieldName, int pageNum);
+    // Copy field `fieldName` as `newFieldName` onto page `pageNum`, at the
+    // same rectangle or with its lower-left corner at (abscissa, ordinate).
+    // Radio groups are not copied.
     void CopyInnerField(const std::string& fieldName,
                         const std::string& newFieldName, int pageNum,
-                        float offsetX, float offsetY);
-    void CopyOuterField(const std::string& fieldName,
-                        const std::string& newFieldName);
-    void CopyOuterField(const std::string& fieldName,
-                        const std::string& newFieldName, int pageNum);
-    void CopyOuterField(const std::string& fieldName,
-                        const std::string& newFieldName, int pageNum,
-                        float offsetX, float offsetY);
+                        float abscissa, float ordinate);
+    // Copy field `fieldName` from the PDF `srcFileName` into this document:
+    // onto its page in the source, or `pageNum`; at its rectangle or with
+    // its lower-left corner at (abscissa, ordinate).
+    void CopyOuterField(const std::string& srcFileName,
+                        const std::string& fieldName);
+    void CopyOuterField(const std::string& srcFileName,
+                        const std::string& fieldName, int pageNum);
+    void CopyOuterField(const std::string& srcFileName,
+                        const std::string& fieldName, int pageNum,
+                        float abscissa, float ordinate);
     void DecorateField(const std::string& fieldName);
     void DecorateField(FieldType fieldType);
     void DecorateField();

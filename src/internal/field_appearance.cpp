@@ -232,8 +232,9 @@ std::string TextField(double w, double h, const std::string& value,
         }
     } else {
         const double lh = size * kLeading;
-        double y = st.multiline ? h - kPad - size * 0.85
-                                : (h - size * 0.72) / 2.0;
+        double y = st.multiline || st.valign == 1 ? h - kPad - size * 0.85
+                   : st.valign == 2               ? kPad + size * 0.25
+                                                  : (h - size * 0.72) / 2.0;
         double prev_x = 0.0, prev_y = 0.0;
         for (const auto& line : lines) {
             const double tw = TextWidth(line, size, st.metrics);

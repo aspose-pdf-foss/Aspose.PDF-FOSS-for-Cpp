@@ -105,6 +105,9 @@ private:
     int border_style_ = BorderStyleUndefined;
     float border_width_ = BorderWidthUndefined;
     FontStyle font_ = FontStyle{};
+    // Font() was set explicitly (DecorateField applies the font only then).
+    bool font_set_ = false;
+    friend class FormEditor;
     std::string custom_font_;
     float font_size_ = 0.0f;
     EncodingType text_encoding_ = EncodingType{};

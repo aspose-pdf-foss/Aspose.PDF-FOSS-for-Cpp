@@ -101,18 +101,18 @@ TEST(FacadesFormEditorSmoke, UnboundAddFieldReturnsFalse) {
     editor.RemoveField("x");  // safe no-op
 }
 
-TEST(FacadesFormEditorSmoke, ConfigurationStubs) {
+TEST(FacadesFormEditorSmoke, ConfigurationOnNewField) {
     Document doc{HelloWorldPdf()};
     FormEditor editor{doc};
     editor.AddField(FieldType::Text, "f", 1, 100, 600, 300, 620);
 
-    EXPECT_FALSE(editor.SetFieldAttribute("f", PropertyFlag::ReadOnly));
-    EXPECT_FALSE(editor.SetFieldLimit("f", 10));
+    EXPECT_TRUE(editor.SetFieldAttribute("f", PropertyFlag::ReadOnly));
+    EXPECT_TRUE(editor.SetFieldLimit("f", 10));
     EXPECT_FALSE(editor.SetFieldScript("f", "app.alert('x')"));
-    EXPECT_FALSE(editor.Single2Multiple("f"));
-    EXPECT_FALSE(editor.MoveField("f", 0, 0, 10, 10));
+    EXPECT_TRUE(editor.Single2Multiple("f"));
+    EXPECT_TRUE(editor.MoveField("f", 0, 0, 10, 10));
 
-    // void stubs must not throw.
+    // Must not throw (AddListItem on a text field is ignored).
     editor.RenameField("f", "g");
     editor.DecorateField("f");
     editor.AddListItem("f", "item");

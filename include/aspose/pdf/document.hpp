@@ -76,6 +76,7 @@ namespace Facades { class PdfFileSignature; }
 namespace Facades { class PdfContentEditor; }
 namespace Facades { class PdfExtractor; }
 namespace Facades { class PdfAnnotationEditor; }
+namespace Facades { class FormEditor; }
 
 class Document {
 public:
@@ -363,6 +364,9 @@ private:
     friend class Aspose::Pdf::Facades::PdfContentEditor;
     friend class Aspose::Pdf::Facades::PdfExtractor;
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
+    friend class Aspose::Pdf::Facades::FormEditor;
+    // 1-based page of `field`'s (first) widget; 0 when unknown.
+    int FieldPageNumberInternal(const Forms::Field& field) const;
 
     // v1.1 metadata write-through. Builds the dirty list for an
     // incremental /Metadata stream update over the supplied

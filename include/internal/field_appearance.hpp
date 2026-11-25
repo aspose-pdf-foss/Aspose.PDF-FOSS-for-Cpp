@@ -88,6 +88,7 @@ struct TextLayoutStyle {
     double size = 12.0;          // 0 = auto
     std::string color = "0 g";   // fill-colour operator
     int quadding = 0;            // 0 left, 1 centre, 2 right
+    int valign = 0;              // single-line: 0 middle, 1 top, 2 bottom
     bool multiline = false;
     bool comb = false;           // with max_len > 0, single-line only
     int max_len = 0;
