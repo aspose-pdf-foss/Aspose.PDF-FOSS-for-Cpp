@@ -42,4 +42,61 @@ std::string RadioButton(double w, double h, bool on);
 // Push button: filled box with a centred white caption ("Button" if empty).
 std::string PushButton(double w, double h, const std::string& caption);
 
+// ---- Text layout -------------------------------------------------------------
+
+// Glyph advance widths (1000-unit em) for laying out single-byte text:
+// a simple font's /FirstChar + /Widths when given, else the Standard-14
+// font `base_font`.
+struct FontMetrics {
+    std::string base_font = "Helvetica";  // Standard-14 name
+    int first_char = 0;
+    std::vector<double> widths;
+    double missing_width = 500.0;
+    double Width(unsigned char c) const;
+};
+
+// A Standard-14 face for a /DA font name or a font family name.
+struct Standard14Face {
+    std::string key;        // conventional resource name, e.g. "HeBo"
+    std::string base_font;  // e.g. "Helvetica-Bold"
+};
+// Helv / Arial* / Helvetica* -> Helvetica, TiRo / Times* -> Times,
+// Cour / Courier* -> Courier; bold / italic from the name; anything else
+// -> Helvetica.
+Standard14Face MapFontName(const std::string& name);
+
+// The font, size and colour operator of a /DA string ("/Helv 0 Tf 0 g").
+struct ParsedDa {
+    std::string font_key;   // "" when no Tf
+    double size = 0.0;      // 0 = auto
+    std::string color = "0 g";
+};
+ParsedDa ParseDa(const std::string& da);
+
+// Width of `text` at `size` points.
+double TextWidth(const std::string& text, double size, const FontMetrics& m);
+
+// Break `text` into lines no wider than `max_width` at `size`: at spaces,
+// at '\n', and inside a word longer than a line.
+std::vector<std::string> WrapText(const std::string& text, double max_width,
+                                  double size, const FontMetrics& m);
+
+// How a text field's value is laid out.
+struct TextLayoutStyle {
+    std::string font_key = kTextFontKey;  // font resource name
+    FontMetrics metrics;
+    double size = 12.0;          // 0 = auto
+    std::string color = "0 g";   // fill-colour operator
+    int quadding = 0;            // 0 left, 1 centre, 2 right
+    bool multiline = false;
+    bool comb = false;           // with max_len > 0, single-line only
+    int max_len = 0;
+};
+
+// Text field: white box with a 1pt black border and `value` laid out per
+// `style` (wrapped when multi-line, one cell per character for comb),
+// clipped to the box.
+std::string TextField(double w, double h, const std::string& value,
+                      const TextLayoutStyle& style);
+
 }  // namespace foundation::field_appearance
