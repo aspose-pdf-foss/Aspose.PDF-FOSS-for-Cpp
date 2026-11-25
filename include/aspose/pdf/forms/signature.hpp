@@ -34,6 +34,9 @@ public:
 
     // Verify(no-arg) ships per canonical; the (ValidationOptions,
     // ValidationResult) overloads drop via translations cascade.
+    // v1: signature verification is not implemented — always throws
+    // std::logic_error rather than reporting an unchecked signature as
+    // valid.
     bool Verify();
 
     SignatureCustomAppearance& CustomAppearance() noexcept;

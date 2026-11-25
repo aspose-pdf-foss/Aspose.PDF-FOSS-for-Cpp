@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "_pending.hpp"
+
 namespace Aspose::Pdf::Forms {
 
 Signature::Signature(const std::string& pfx,
@@ -10,9 +12,11 @@ Signature::Signature(const std::string& pfx,
       pfx_password_(password) {}
 
 bool Signature::Verify() {
-    // v1 stub — actual PKCS verification lands with F8
-    // AcroForm save-through + a real crypto path.
-    return true;
+    // No cryptographic verification path exists yet (no PKCS#7 / X.509
+    // parsing or RSA verify), and a Signature is not bound to the signed
+    // document's bytes. Throw rather than report an unverified signature
+    // as valid.
+    PENDING("signature-verification");
 }
 
 SignatureCustomAppearance&

@@ -12,6 +12,7 @@
 // SignatureField::Sign.
 // =============================================================================
 
+#include <stdexcept>
 #include <string>
 
 #include <aspose/pdf/color.hpp>
@@ -55,8 +56,15 @@ TEST(FormsSignatureHierarchySmoke, SignatureAccessorRoundtrip) {
     EXPECT_TRUE(sig.ShowProperties());
 
     EXPECT_TRUE(sig.ByteRange().empty());
-    // Verify() v1 stub returns true.
-    EXPECT_TRUE(sig.Verify());
+}
+
+TEST(FormsSignatureHierarchySmoke, VerifyThrowsUntilVerificationExists) {
+    // There is no cryptographic verification path yet, so Verify() must
+    // not report success: it throws std::logic_error instead.
+    PKCS7 sig{"/etc/cert.pfx", "p7pass"};
+    EXPECT_THROW(sig.Verify(), std::logic_error);
+    PKCS7 blank;
+    EXPECT_THROW(blank.Verify(), std::logic_error);
 }
 
 TEST(FormsSignatureHierarchySmoke, PKCS1AndPKCS7CtorsCompile) {

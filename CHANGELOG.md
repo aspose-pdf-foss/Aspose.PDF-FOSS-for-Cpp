@@ -15,6 +15,12 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   from another document: the page and the objects it reaches are deep-imported. Annotations and
   unsaved edits on the source page are not carried over.
 
+### Changed
+
+- `Forms::Signature::Verify()` now throws `std::logic_error` instead of always returning `true`.
+  The library has no signature verification yet, so the old result reported unchecked signatures
+  as valid.
+
 ### Fixed
 
 - `PdfFileInfo::GetPageWidth`, `GetPageHeight`, `GetPageRotation`, `GetPageXOffset`, and
