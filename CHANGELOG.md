@@ -24,6 +24,13 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   flattens only the given annotation types on the given pages (`Widget` includes form fields).
   Annotations the library does not model, such as FreeText or Ink, are covered too; one without an
   appearance is left in place.
+- `Form::AddFieldAppearance(field, page, rect)` shows a field at one more place (for example the
+  same name on every page); all places share the field's value. `Form::RemoveFieldAppearance(field,
+  index)` removes a place (1-based; the last one cannot be removed). Both work for new fields and
+  for fields loaded from a file; radio buttons are rejected, since their places are their options.
+- `FreeTextAnnotation::SetTextStyle(from, to, styles)` makes characters `[from, to)` bold and/or
+  italic, drawn with the matching face of the `DefaultAppearance` font family (Helvetica, Times or
+  Courier) and written to the annotation's rich text (`/RC`).
 
 ### Changed
 
@@ -36,6 +43,8 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- FreeText annotations now carry the required `/DA` entry, and their appearance uses the font size
+  from `DefaultAppearance` instead of a fixed 11 pt.
 - `PdfFileInfo::GetPageWidth`, `GetPageHeight`, `GetPageRotation`, `GetPageXOffset`, and
   `GetPageYOffset`, and `PdfPageEditor::GetPageSize` and `GetPageRotation` now return the page's
   real media box and rotation instead of fixed US-Letter values. An out-of-range page number throws
