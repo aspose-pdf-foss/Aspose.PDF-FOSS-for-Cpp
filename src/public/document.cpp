@@ -8470,8 +8470,10 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         return AppendAcroFormFieldsUpdate(working, form_->fields_);
     std::vector<Aspose::Pdf::Forms::Field*> fields = form_->flatten_fields_;
     fields.insert(fields.end(), form_->fields_.begin(), form_->fields_.end());
-    return RemoveCatalogAcroForm(AppendFlattenWidgetsUpdate(
-        AppendAcroFormFieldsUpdate(working, fields)));
+    FlattenRequest all_widgets;
+    all_widgets.all_widgets = true;
+    return RemoveCatalogAcroForm(AppendFlattenUpdate(
+        AppendAcroFormFieldsUpdate(working, fields), all_widgets));
 }
 
 std::vector<std::byte> Document::RemoveCatalogAcroForm(
@@ -8512,8 +8514,93 @@ std::vector<std::byte> Document::RemoveCatalogAcroForm(
             &cat_dirty, 1));
 }
 
-std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
-        const std::vector<std::byte>& working) const {
+std::vector<std::byte> Document::RemoveFieldsFromAcroForm(
+        const std::vector<std::byte>& working,
+        const std::set<std::uint32_t>& removed_widgets) const {
+    namespace fo = foundation::objects;
+    if (removed_widgets.empty()) return working;
+    auto working_span =
+        std::span<const std::byte>(working.data(), working.size());
+    foundation::trailer::Trailer trailer_bundle;
+    fo::Dump dump;
+    try {
+        trailer_bundle = foundation::trailer::Parse(working_span);
+        dump = fo::Parse(working_span);
+    } catch (const std::exception&) {
+        return working;
+    }
+    const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+    const auto* catalog_dict =
+        catalog ? std::get_if<fo::Dict>(&catalog->value.v) : nullptr;
+    if (catalog_dict == nullptr) return working;
+    std::uint32_t acroform_id = 0;
+    const auto* acro = ResolveAcroForm(
+        dump, DictGet(*catalog_dict, "AcroForm"), acroform_id);
+    if (acro == nullptr) return working;
+    const auto* fv = DictGet(*acro, "Fields");
+    const auto* fields = fv ? std::get_if<fo::Array>(&fv->v) : nullptr;
+    if (fields == nullptr) return working;
+
+    // A field goes when it is a removed widget itself, or every one of its
+    // /Kids is.
+    auto gone = [&](std::uint32_t id) {
+        if (removed_widgets.count(id)) return true;
+        const auto* obj = FindObject(dump, id);
+        const auto* d = obj ? std::get_if<fo::Dict>(&obj->value.v) : nullptr;
+        const auto* kv = d ? DictGet(*d, "Kids") : nullptr;
+        const auto* kids = kv ? std::get_if<fo::Array>(&kv->v) : nullptr;
+        if (kids == nullptr || kids->items.empty()) return false;
+        for (const auto& k : kids->items) {
+            const auto* kr = std::get_if<fo::Ref>(&k.v);
+            if (kr == nullptr || !removed_widgets.count(kr->id)) return false;
+        }
+        return true;
+    };
+    fo::Array kept;
+    for (const auto& it : fields->items) {
+        const auto* r = std::get_if<fo::Ref>(&it.v);
+        if (r != nullptr && gone(r->id)) continue;
+        kept.items.push_back(it);
+    }
+    if (kept.items.size() == fields->items.size()) return working;
+
+    fo::Dict updated_acro = *acro;
+    for (auto it = updated_acro.entries.begin();
+         it != updated_acro.entries.end();) {
+        if (it->first == "Fields") it = updated_acro.entries.erase(it);
+        else ++it;
+    }
+    { fo::Value v; v.v = std::move(kept);
+      updated_acro.entries.emplace_back("Fields", std::move(v)); }
+
+    foundation::pdf_writer_incremental::DirtyObject d;
+    if (acroform_id != 0) {
+        const auto* ao = FindObject(dump, acroform_id);
+        d.id = acroform_id;
+        d.generation = ao ? ao->generation : 0;
+        d.value.v = std::move(updated_acro);
+    } else {  // /AcroForm inline in the catalog
+        fo::Dict updated_catalog = *catalog_dict;
+        for (auto it = updated_catalog.entries.begin();
+             it != updated_catalog.entries.end();) {
+            if (it->first == "AcroForm") it = updated_catalog.entries.erase(it);
+            else ++it;
+        }
+        { fo::Value v; v.v = std::move(updated_acro);
+          updated_catalog.entries.emplace_back("AcroForm", std::move(v)); }
+        d.id = catalog->id;
+        d.generation = catalog->generation;
+        d.value.v = std::move(updated_catalog);
+    }
+    return foundation::pdf_writer_incremental::AppendIncremental(
+        working_span,
+        std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+            &d, 1));
+}
+
+std::vector<std::byte> Document::AppendFlattenUpdate(
+        const std::vector<std::byte>& working, const FlattenRequest& req,
+        std::set<std::uint32_t>* removed) const {
     namespace fa = foundation::field_appearance;
     namespace fo = foundation::objects;
     auto working_span =
@@ -8578,9 +8665,10 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
 
     // The normal-appearance stream id to burn for `widget`: its /AP /N
     // stream (or the /AS entry of a state dictionary); for a widget with no
-    // /AP, one generated from the field's value. 0 = nothing to draw.
-    auto appearance_for = [&](const fo::Dict& widget, double w,
-                              double h) -> std::uint32_t {
+    // /AP, one generated from the field's value when `generate`. 0 = nothing
+    // to draw.
+    auto appearance_for = [&](const fo::Dict& widget, double w, double h,
+                              bool generate) -> std::uint32_t {
         if (const auto* apv = resolve(DictGet(widget, "AP"))) {
             const auto* ap = std::get_if<fo::Dict>(&apv->v);
             const fo::Value* nv = ap ? DictGet(*ap, "N") : nullptr;
@@ -8600,6 +8688,7 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
             const auto* so = FindObject(dump, sr->id);
             return (so && std::get_if<fo::Stream>(&so->value.v)) ? sr->id : 0;
         }
+        if (!generate) return 0;
         // No /AP (e.g. a NeedAppearances file): generate from the value.
         const std::string ft = ReadStrOrName(inherited(widget, "FT"));
         const fo::Value* ffv = inherited(widget, "Ff");
@@ -8628,7 +8717,9 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
             MakeAppearanceHeader(w, h, font_key, base_font), content);
     };
 
-    for (const auto& leaf : tree.leaves) {
+    const int page_count = static_cast<int>(tree.leaves.size());
+    for (int page_no = 1; page_no <= page_count; ++page_no) {
+        const auto& leaf = tree.leaves[page_no - 1];
         const auto* page_obj = FindObject(dump, leaf.id);
         const auto* page_dict =
             page_obj ? std::get_if<fo::Dict>(&page_obj->value.v) : nullptr;
@@ -8639,9 +8730,10 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
         if (annots == nullptr) continue;
 
         fo::Array kept;
-        std::string burn;  // "q <cm> cm /AspFlN Do Q" per burned widget
+        std::string burn;  // "q <cm> cm /AspFlN Do Q" per burned annotation
         std::vector<std::pair<std::string, std::uint32_t>> xobjects;
-        bool had_widget = false;
+        bool changed = false;
+        std::set<std::uint32_t> popups;  // /Popup of removed annotations
 
         // Existing /XObject names, to pick non-conflicting AspFl<N> keys.
         // /Resources may be inherited from an ancestor /Pages node.
@@ -8672,27 +8764,80 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
         for (const auto& item : annots->items) {
             const auto* av = resolve(&item);
             const auto* ad = av ? std::get_if<fo::Dict>(&av->v) : nullptr;
-            if (ad == nullptr ||
-                ReadStrOrName(DictGet(*ad, "Subtype")) != "Widget") {
+            if (ad == nullptr) {
                 kept.items.push_back(item);
                 continue;
             }
-            had_widget = true;
+            const std::string subtype = ReadStrOrName(DictGet(*ad, "Subtype"));
+            const bool is_widget = subtype == "Widget";
+            const auto* item_ref = std::get_if<fo::Ref>(&item.v);
+            const std::uint32_t item_id = item_ref ? item_ref->id : 0;
+            std::uint32_t parent_id = 0;
+            if (const auto* pv = DictGet(*ad, "Parent"))
+                if (const auto* pr = std::get_if<fo::Ref>(&pv->v))
+                    parent_id = pr->id;
+
+            // Selected explicitly (all widgets / by object id) or by a page +
+            // subtype rule. Explicit selections without an appearance are
+            // removed; rule selections without one are left in place.
+            enum class Sel { None, Explicit, Rule };
+            Sel sel = Sel::None;
+            bool hide_buttons = false;
+            if ((is_widget && req.all_widgets) ||
+                (item_id != 0 && req.ids.count(item_id)) ||
+                (parent_id != 0 && req.ids.count(parent_id))) {
+                sel = Sel::Explicit;
+            } else {
+                for (const auto& rule : req.rules) {
+                    const int last =
+                        rule.last_page <= 0 ? page_count : rule.last_page;
+                    if (page_no < rule.first_page || page_no > last) continue;
+                    if (!rule.subtypes.empty() && !rule.subtypes.count(subtype))
+                        continue;
+                    sel = Sel::Rule;
+                    hide_buttons = hide_buttons || rule.hide_buttons;
+                }
+            }
+            if (sel == Sel::None) {
+                kept.items.push_back(item);
+                continue;
+            }
+            // Remove it from /Annots (with its popup); drawn below when it
+            // has an appearance.
+            auto drop = [&]() {
+                changed = true;
+                if (removed != nullptr && item_id != 0) removed->insert(item_id);
+                if (const auto* pp = DictGet(*ad, "Popup"))
+                    if (const auto* pr = std::get_if<fo::Ref>(&pp->v))
+                        popups.insert(pr->id);
+            };
             const fo::Value* fv = DictGet(*ad, "F");
             const std::int64_t flags =
                 fv ? static_cast<std::int64_t>(num(*fv)) : 0;
-            if (flags & (2 | 32)) continue;  // Hidden / NoView
+            if (flags & (2 | 32)) { drop(); continue; }  // Hidden / NoView
+            if (hide_buttons && is_widget) {
+                const fo::Value* ffv = inherited(*ad, "Ff");
+                const auto ff = ffv ? static_cast<std::int64_t>(num(*ffv)) : 0;
+                if (ff & (1LL << 16)) { drop(); continue; }  // push button
+            }
             const auto* rv = resolve(DictGet(*ad, "Rect"));
             const auto* ra = rv ? std::get_if<fo::Array>(&rv->v) : nullptr;
-            if (ra == nullptr || ra->items.size() != 4) continue;
+            if (ra == nullptr || ra->items.size() != 4) { drop(); continue; }
             const double x0 = std::min(num(ra->items[0]), num(ra->items[2]));
             const double x1 = std::max(num(ra->items[0]), num(ra->items[2]));
             const double y0 = std::min(num(ra->items[1]), num(ra->items[3]));
             const double y1 = std::max(num(ra->items[1]), num(ra->items[3]));
             const double w = x1 - x0, h = y1 - y0;
-            if (w <= 0.0 || h <= 0.0) continue;
-            const std::uint32_t ap_id = appearance_for(*ad, w, h);
-            if (ap_id == 0) continue;
+            if (w <= 0.0 || h <= 0.0) { drop(); continue; }
+            const std::uint32_t ap_id = appearance_for(*ad, w, h, is_widget);
+            if (ap_id == 0) {
+                if (sel == Sel::Rule && !is_widget)
+                    kept.items.push_back(item);
+                else
+                    drop();
+                continue;
+            }
+            drop();
 
             // §12.5.5: map the form's /BBox, transformed by its /Matrix, onto
             // the widget /Rect. Do applies /Matrix itself; cm supplies the
@@ -8737,7 +8882,19 @@ std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
                     " Do Q\n";
             xobjects.emplace_back(name, ap_id);
         }
-        if (!had_widget) continue;
+        if (!changed) continue;
+        if (!popups.empty()) {
+            fo::Array filtered;
+            for (const auto& it : kept.items) {
+                const auto* r = std::get_if<fo::Ref>(&it.v);
+                if (r != nullptr && popups.count(r->id)) {
+                    if (removed != nullptr) removed->insert(r->id);
+                    continue;
+                }
+                filtered.items.push_back(it);
+            }
+            kept = std::move(filtered);
+        }
 
         fo::Dict updated = *page_dict;
         auto erase_key = [&](const char* key) {

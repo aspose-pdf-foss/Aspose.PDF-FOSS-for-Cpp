@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -422,7 +423,7 @@ private:
     // pageNumber tracking on Form::Add.
     // When Form::Flatten() was requested: write the captured fields
     // (AppendAcroFormFieldsUpdate), burn the widgets into the page content
-    // (AppendFlattenWidgetsUpdate), then drop the catalog /AcroForm.
+    // (AppendFlattenUpdate), then drop the catalog /AcroForm.
     std::vector<std::byte> AppendAcroFormUpdate(
         const std::vector<std::byte>& working) const;
     // The field-writing pass over `fields` (the form's current fields, or
@@ -430,12 +431,34 @@ private:
     std::vector<std::byte> AppendAcroFormFieldsUpdate(
         const std::vector<std::byte>& working,
         const std::vector<Aspose::Pdf::Forms::Field*>& fields) const;
-    // Form::Flatten() burn-in: draw every visible widget's normal
-    // appearance into its page content (q ... cm /AspFl<N> Do Q, the
-    // existing content wrapped in q/Q), then drop all widgets from the
-    // page /Annots. Hidden / NoView widgets are dropped without drawing.
-    std::vector<std::byte> AppendFlattenWidgetsUpdate(
-        const std::vector<std::byte>& working) const;
+    // What a flatten pass burns: every widget, the annotations whose object
+    // id (or /Parent id) is listed, and/or page + subtype rules.
+    struct FlattenRequest {
+        bool all_widgets = false;
+        std::set<std::uint32_t> ids;
+        struct Rule {
+            int first_page = 1;   // 1-based, inclusive
+            int last_page = 0;    // inclusive; <= 0 = the last page
+            std::set<std::string> subtypes;  // empty = every subtype
+            bool hide_buttons = false;       // drop push buttons undrawn
+        };
+        std::vector<Rule> rules;
+    };
+    // Flatten pass: draw each selected annotation's normal appearance into
+    // its page content (q ... cm /AspFl<N> Do Q, the existing content wrapped
+    // in q/Q) and drop it (and its /Popup) from the page /Annots. Hidden /
+    // NoView selections are dropped undrawn. Without an /AP a widget is
+    // generated from its value; another annotation is dropped when selected
+    // explicitly and kept when selected by a rule. `removed` receives the
+    // object ids dropped from /Annots.
+    std::vector<std::byte> AppendFlattenUpdate(
+        const std::vector<std::byte>& working, const FlattenRequest& req,
+        std::set<std::uint32_t>* removed = nullptr) const;
+    // Drop from /AcroForm /Fields every field whose object id is in
+    // `removed_widgets`, or whose /Kids all are.
+    std::vector<std::byte> RemoveFieldsFromAcroForm(
+        const std::vector<std::byte>& working,
+        const std::set<std::uint32_t>& removed_widgets) const;
     // Remove /AcroForm from the catalog (no-op when absent).
     std::vector<std::byte> RemoveCatalogAcroForm(
         const std::vector<std::byte>& working) const;
