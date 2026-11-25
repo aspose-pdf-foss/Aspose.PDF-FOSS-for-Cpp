@@ -1778,6 +1778,8 @@ struct FreeTextLayout {
     // Resource name -> standard-14 base font; the regular face first.
     std::vector<std::pair<std::string, std::string>> fonts;
     std::vector<FreeTextSegment> segments;
+    // The text wrapped to the box: each line's styled segments.
+    std::vector<std::vector<FreeTextSegment>> lines;
     std::string rich_text;  // /RC XHTML; empty when no run is styled
 };
 
@@ -1786,7 +1788,8 @@ struct FreeTextLayout {
 // named by `da` (Times* / Courier*, else Helvetica).
 FreeTextLayout LayOutFreeText(
         const std::string& text, const std::vector<std::array<int, 3>>& runs,
-        const Aspose::Pdf::Annotations::DefaultAppearance& da) {
+        const Aspose::Pdf::Annotations::DefaultAppearance& da,
+        double max_width) {
     FreeTextLayout lay;
     if (da.FontSize() > 0.0) lay.size = da.FontSize();
     std::string family = da.FontName();
@@ -1852,6 +1855,57 @@ FreeTextLayout LayOutFreeText(
     }
     for (std::size_t k = 0; k < faces.size(); ++k)
         if (used[k]) lay.fonts.push_back(faces[k]);
+
+    // Wrap to `max_width`: break at the last space that fits, inside a word
+    // longer than a line, and at '\n'; each character measured in its face.
+    std::array<foundation::field_appearance::FontMetrics, 4> metrics;
+    for (std::size_t k = 0; k < faces.size(); ++k)
+        metrics[k].base_font = faces[k].second;
+    auto char_width = [&](int i) {
+        return metrics[static_cast<std::size_t>(style[static_cast<std::size_t>(i)])]
+                   .Width(static_cast<unsigned char>(text[static_cast<std::size_t>(i)])) *
+               lay.size / 1000.0;
+    };
+    auto add_line = [&](int from, int to) {
+        std::vector<FreeTextSegment> line;
+        for (int i = from; i < to;) {
+            int j = i;
+            while (j < to && style[static_cast<std::size_t>(j)] ==
+                                 style[static_cast<std::size_t>(i)])
+                ++j;
+            line.push_back(
+                {faces[static_cast<std::size_t>(style[static_cast<std::size_t>(i)])].first,
+                 text.substr(static_cast<std::size_t>(i),
+                             static_cast<std::size_t>(j - i))});
+            i = j;
+        }
+        lay.lines.push_back(std::move(line));
+    };
+    for (int i = 0; i <= n;) {
+        const int start = i;
+        int j = i, last_space = -1;
+        double width = 0.0;
+        while (j < n && text[static_cast<std::size_t>(j)] != '\n') {
+            const double cw = char_width(j);
+            if (width + cw > max_width && j > start) break;
+            if (text[static_cast<std::size_t>(j)] == ' ') last_space = j;
+            width += cw;
+            ++j;
+        }
+        if (j < n && text[static_cast<std::size_t>(j)] != '\n') {  // overflow
+            if (last_space > start) {
+                add_line(start, last_space);
+                i = last_space + 1;
+            } else {
+                add_line(start, j);
+                i = j;
+            }
+            continue;
+        }
+        add_line(start, j);
+        if (j >= n) break;
+        i = j + 1;  // past the '\n'
+    }
     if (styled) {
         lay.rich_text =
             "<?xml version=\"1.0\"?><body xmlns=\"http://www.w3.org/1999/xhtml\""
@@ -2598,19 +2652,26 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                                             static_cast<int>(r.style)});
                         const FreeTextLayout lay = LayOutFreeText(
                             ft->Contents(), runs,
-                            ft->DefaultAppearanceObject());
+                            ft->DefaultAppearanceObject(), w - 12.0);
                         free_text_fonts = lay.fonts;
                         cs << "q 1 1 0.7 rg " << llx << ' ' << lly << ' ' << w
                            << ' ' << h << " re f 0 0 0 RG 1 w " << (llx + 0.5)
                            << ' ' << (lly + 0.5) << ' ' << (w - 1) << ' '
                            << (h - 1) << " re S " << rgb(cr, cg, cb)
                            << " rg BT " << (llx + 6) << ' '
-                           << (lly + h / 2 - lay.size * 0.35) << " Td ";
-                        for (const auto& seg : lay.segments) {
-                            cs << '/' << seg.font_key << ' ' << lay.size
-                               << " Tf (";
-                            esc(seg.text);
-                            cs << ") Tj ";
+                           << (ury - 4 - lay.size * 0.85) << " Td ";
+                        // Lines top-down; each line's runs in their faces.
+                        bool first_line = true;
+                        for (const auto& line : lay.lines) {
+                            if (!first_line)
+                                cs << "0 " << -(lay.size * 1.15) << " Td ";
+                            first_line = false;
+                            for (const auto& seg : line) {
+                                cs << '/' << seg.font_key << ' ' << lay.size
+                                   << " Tf (";
+                                esc(seg.text);
+                                cs << ") Tj ";
+                            }
                         }
                         cs << "ET Q\n";
                         foundation::objects::String da;

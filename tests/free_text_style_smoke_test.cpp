@@ -121,3 +121,25 @@ TEST(FreeTextStyle, LaterStyleOverrides) {
     EXPECT_TRUE(Has(s, "<span style=\"font-weight:bold\">He</span>ll"
                        "<span style=\"font-weight:bold\">o World</span>"));
 }
+
+TEST(FreeTextStyle, LongTextWrapsWithinTheBox) {
+    const std::string out = TmpPath("freetext_wrap");
+    {
+        Document doc{HelloWorldPdf()};
+        auto page = doc.Pages()[1];
+        Annotations::DefaultAppearance da;
+        da.FontName("Helvetica");
+        da.FontSize(12);
+        Annotations::FreeTextAnnotation ft{page, Rect(100, 300, 200, 400), da};
+        // About four lines at 12pt in an 88pt-wide text area.
+        ft.Contents("alpha beta gamma delta epsilon zeta eta theta iota kappa");
+        ft.SetTextStyle(0, 5, RichTextFontStyles::Bold);
+        page.Annotations().Add(ft);
+        doc.Save(out);
+    }
+    Document re{out};
+    const auto img = Render(re, 1);
+    EXPECT_GT(DarkPixels(img, 100, 370, 200, 400), 20);  // first lines
+    EXPECT_GT(DarkPixels(img, 100, 335, 200, 365), 10);  // wrapped lines
+    std::filesystem::remove(out);
+}
