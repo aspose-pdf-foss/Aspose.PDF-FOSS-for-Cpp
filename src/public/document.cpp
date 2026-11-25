@@ -2182,7 +2182,13 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                      : nullptr;
         if (page_dict_in == nullptr) continue;
 
-        // Surviving loaded-annotation refs, in original order.
+        // The existing /Annots entries, in original order, minus the loaded
+        // annotations removed from the collection. Entries the collection
+        // never modelled (form widgets, popups, unsupported subtypes) are
+        // kept as they are.
+        std::set<std::uint32_t> removed_loaded_ids;
+        for (const auto& [annot, id] : slot->loaded_ids_)
+            if (!present_loaded.count(id)) removed_loaded_ids.insert(id);
         foundation::objects::Array annots_arr;
         if (const auto* a = DictGet(*page_dict_in, "Annots")) {
             if (const auto* arr =
@@ -2190,8 +2196,8 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                 for (const auto& it : arr->items) {
                     const auto* ref =
                         std::get_if<foundation::objects::Ref>(&it.v);
-                    if (ref && present_loaded.count(ref->id))
-                        annots_arr.items.push_back(it);
+                    if (ref && removed_loaded_ids.count(ref->id)) continue;
+                    annots_arr.items.push_back(it);
                 }
             }
         }

@@ -39,6 +39,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - Changing the value of a field loaded from a file now also regenerates its appearance (`/AP`),
   so viewers show the new value instead of the old one. Check boxes keep the name of their own
   "on" state instead of always using `/Yes`.
+- Adding or deleting an annotation on a page of a loaded document no longer drops the page's other
+  annotations that the annotation collection does not model, such as form field widgets, popups
+  and FreeText/Ink/Line/Polygon annotations. Previously the form fields on that page disappeared.
 
 ## [1.0.1] - 2026-09-29
 

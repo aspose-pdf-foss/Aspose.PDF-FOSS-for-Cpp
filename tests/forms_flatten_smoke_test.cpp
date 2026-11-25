@@ -597,3 +597,55 @@ TEST(FormsFlatten, FlattenListBoxShowsSelection) {
     EXPECT_GT(highlight, 20);
     std::filesystem::remove(out);
 }
+
+// A page /Annots rewrite (an annotation added or removed) must keep the
+// entries the annotation collection does not model, such as form widgets.
+TEST(FormsAnnotations, AddingAnnotationKeepsLoadedWidgets) {
+    const std::string src = TmpPath("annadd_src");
+    const std::string out = TmpPath("annadd_out");
+    SaveTextForm(src, "Keep");
+    {
+        Document re{src};
+        auto page = re.Pages()[1];
+        Aspose::Pdf::Annotations::SquareAnnotation sq{page,
+                                                      Rect(50, 50, 90, 90)};
+        page.Annotations().Add(sq);
+        re.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 1);
+    EXPECT_EQ(CountSubtype(p, "Square"), 1);
+    Document re2{out};
+    EXPECT_EQ(re2.Form().Count(), 1);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FormsAnnotations, DeletingAnnotationKeepsLoadedWidgets) {
+    const std::string src = TmpPath("anndel_src");
+    const std::string out = TmpPath("anndel_out");
+    {
+        Document doc{HelloWorldPdf()};
+        TextBoxField tb{doc, Rect(100, 400, 300, 420)};
+        tb.Value("Keep");
+        doc.Form().Add(tb, "name", 1);
+        auto page = doc.Pages()[1];
+        Aspose::Pdf::Annotations::SquareAnnotation sq{page,
+                                                      Rect(50, 50, 90, 90)};
+        page.Annotations().Add(sq);
+        doc.Save(src);
+    }
+    ASSERT_EQ(CountSubtype(ParsePage(ReadFile(src), 0), "Widget"), 1);
+    {
+        Document re{src};
+        auto page = re.Pages()[1];
+        ASSERT_EQ(page.Annotations().Count(), 1);
+        page.Annotations().Delete(0);  // 0-based
+        re.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 1);
+    EXPECT_EQ(CountSubtype(p, "Square"), 0);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
