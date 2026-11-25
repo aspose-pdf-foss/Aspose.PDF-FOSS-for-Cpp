@@ -117,3 +117,137 @@ TEST(TextFieldLayout, PasswordFieldShowsAsterisks) {
     EXPECT_FALSE(Has(bytes, "(secret) Tj"));
     std::filesystem::remove(out);
 }
+
+// ---- Fields loaded from a file ----------------------------------------------
+
+namespace {
+
+// A one-page form: field "name" (no /AP) at (100,400)-(300,430) with the
+// given /DA, /Ff and /V; /AcroForm /DR /Font holds Helv (obj 6, Helvetica)
+// and F1 (obj 7, Courier with a /Widths table).
+void WriteForm(const std::string& path, const std::string& da, int ff,
+               const std::string& value) {
+    WritePdf(path,
+             {"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] "
+              "/DR << /Font << /Helv 6 0 R /F1 7 0 R >> >> "
+              "/DA (/Helv 0 Tf 0 g) >> >>",
+              "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+              "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+              "/Annots [4 0 R] >>",
+              "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) "
+              "/Rect [100 400 300 430] /P 3 0 R /F 4 /Ff " +
+                  std::to_string(ff) + " /DA (" + da + ") /V (" + value +
+                  ") >>",
+              "<< >>",
+              "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+              "<< /Type /Font /Subtype /Type1 /BaseFont /Courier "
+              "/FirstChar 32 /LastChar 126 /Widths [" +
+                  [] {
+                      std::string w;
+                      for (int i = 32; i <= 126; ++i) w += "600 ";
+                      return w;
+                  }() +
+                  "] >>"});
+}
+
+// The font resource `key` of the normal appearance of field "name".
+const fo::Value* ApFont(const Parsed& p, const std::string& key) {
+    for (const auto& d : AnnotDicts(p)) {
+        if (NameOf(Get(d, "Subtype")) != "Widget") continue;
+        const fo::Dict ap = ResolveDict(p.dump, Get(d, "AP"));
+        const fo::Dict n = ResolveDict(p.dump, Get(ap, "N"));
+        const fo::Dict res = ResolveDict(p.dump, Get(n, "Resources"));
+        const fo::Dict fonts = ResolveDict(p.dump, Get(res, "Font"));
+        return Get(fonts, key);
+    }
+    return nullptr;
+}
+
+int ColorPixels(const foundation::png_decoder::DecodedImage& img, bool red) {
+    return CountPixels(img, 100, 400, 300, 430, 2.0, [&](int r, int g, int b) {
+        return red ? (r > 150 && g < 100 && b < 100)
+                   : (b > 150 && r < 100 && g < 100);
+    });
+}
+
+}  // namespace
+
+TEST(TextFieldLayout, LoadedFieldUsesItsDaColorAndDrFont) {
+    const std::string src = TmpPath("loaded_da_src");
+    const std::string out = TmpPath("loaded_da_out");
+    WriteForm(src, "/Helv 0 Tf 1 0 0 rg", 0, "Old");
+    {
+        Document re{src};
+        ASSERT_EQ(re.Form().Count(), 1);
+        re.Form().Fields()[0]->Value("Red text");
+        re.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    const fo::Value* font = ApFont(p, "Helv");
+    ASSERT_NE(font, nullptr);
+    const auto* ref = std::get_if<fo::Ref>(&font->v);
+    ASSERT_NE(ref, nullptr);
+    EXPECT_EQ(ref->id, 6u);  // the /DR font object itself
+    Document re{out};
+    EXPECT_GT(ColorPixels(Render(re, 1), true), 10);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(TextFieldLayout, LoadedFieldUsesDrFontWithWidths) {
+    const std::string src = TmpPath("loaded_widths_src");
+    const std::string out = TmpPath("loaded_widths_out");
+    WriteForm(src, "/F1 10 Tf 0 0 1 rg", 0, "Old");
+    {
+        Document re{src};
+        re.Form().Fields()[0]->Value("Blue");
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    EXPECT_TRUE(Has(bytes, "/F1 10 Tf"));
+    const fo::Value* font = ApFont(ParsePage(bytes, 0), "F1");
+    ASSERT_NE(font, nullptr);
+    ASSERT_NE(std::get_if<fo::Ref>(&font->v), nullptr);
+    EXPECT_EQ(std::get_if<fo::Ref>(&font->v)->id, 7u);
+    Document re{out};
+    EXPECT_GT(ColorPixels(Render(re, 1), false), 10);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(TextFieldLayout, LoadedMultilineFieldWraps) {
+    const std::string src = TmpPath("loaded_ml_src");
+    const std::string out = TmpPath("loaded_ml_out");
+    WriteForm(src, "/Helv 8 Tf 0 g", 4096, "x");
+    {
+        Document re{src};
+        re.Form().Fields()[0]->Value(
+            "one two three four five six seven eight nine ten eleven twelve "
+            "thirteen fourteen fifteen sixteen");
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    int tj = 0;
+    for (std::size_t p = 0; (p = bytes.find(") Tj", p)) != std::string::npos;
+         p += 4)
+        ++tj;
+    EXPECT_GE(tj, 2);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(TextFieldLayout, FlattenFieldWithoutApUsesDa) {
+    const std::string src = TmpPath("flat_noap_src");
+    const std::string out = TmpPath("flat_noap_out");
+    WriteForm(src, "/Helv 14 Tf 1 0 0 rg", 0, "Red");
+    {
+        Document re{src};
+        re.Form().Flatten();
+        re.Save(out);
+    }
+    EXPECT_TRUE(Has(ReadFile(out), "/Helv 14 Tf"));
+    Document re{out};
+    EXPECT_GT(ColorPixels(Render(re, 1), true), 10);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}

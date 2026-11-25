@@ -8726,6 +8726,129 @@ std::vector<std::byte> Document::RemoveCatalogAcroForm(
             &cat_dirty, 1));
 }
 
+namespace {
+
+// A number (integer or real) PDF value; `fallback` otherwise.
+double NumberOr(const foundation::objects::Value* v, double fallback) {
+    if (v == nullptr) return fallback;
+    if (const auto* d = std::get_if<double>(&v->v)) return *d;
+    if (const auto* i = std::get_if<std::int64_t>(&v->v))
+        return static_cast<double>(*i);
+    return fallback;
+}
+
+// Appearance-stream header ([0 0 w h]) whose only font resource is
+// `font_key` -> `font` (a reference to an existing font, or a dict).
+foundation::objects::Dict MakeAppearanceHeaderWithFont(
+        double w, double h, const std::string& font_key,
+        foundation::objects::Value font) {
+    foundation::objects::Dict header =
+        MakeAppearanceHeader(w, h, font_key.c_str(), "Helvetica");
+    for (auto& e : header.entries) {
+        if (e.first != "Resources") continue;
+        foundation::objects::Dict fonts;
+        fonts.entries.emplace_back(font_key, std::move(font));
+        foundation::objects::Dict res;
+        { foundation::objects::Value v; v.v = std::move(fonts);
+          res.entries.emplace_back("Font", std::move(v)); }
+        e.second.v = std::move(res);
+    }
+    return header;
+}
+
+// How a text field loaded from a file lays out its value, and the font
+// resource its appearance uses.
+struct FileTextStyle {
+    foundation::field_appearance::TextLayoutStyle style;
+    foundation::objects::Value font;  // ref to the /DR font, or a dict
+    bool password = false;
+};
+
+// Read the layout of the text field whose widget is `widget`: /DA (font,
+// size, colour), /Q, /Ff (multi-line, comb, password) and /MaxLen, each
+// inherited through /Parent and, for /DA and /Q, from `acroform`. The font
+// is the /DR font the /DA names when it is a simple font (its /Widths, or
+// its Standard-14 /BaseFont, give the metrics); otherwise the /DA name is
+// mapped to a Standard-14 face.
+FileTextStyle FileFieldTextStyle(const foundation::objects::Dict& widget,
+                                 const foundation::objects::Dump& dump,
+                                 const foundation::objects::Dict* acroform) {
+    namespace fo = foundation::objects;
+    namespace fa = foundation::field_appearance;
+    auto resolve = [&](const fo::Value* v) -> const fo::Value* {
+        if (v == nullptr) return nullptr;
+        if (const auto* r = std::get_if<fo::Ref>(&v->v)) {
+            const auto* o = FindPageObj(dump, r->id);
+            return o ? &o->value : nullptr;
+        }
+        return v;
+    };
+    auto inherited = [&](const char* key) -> const fo::Value* {
+        const fo::Dict* cur = &widget;
+        for (int depth = 0; cur != nullptr && depth < 32; ++depth) {
+            if (const auto* v = DictGet(*cur, key)) return resolve(v);
+            const auto* pv = resolve(DictGet(*cur, "Parent"));
+            cur = pv ? std::get_if<fo::Dict>(&pv->v) : nullptr;
+        }
+        if (acroform != nullptr &&
+            (std::string(key) == "DA" || std::string(key) == "Q"))
+            return resolve(DictGet(*acroform, key));
+        return nullptr;
+    };
+
+    FileTextStyle out;
+    fa::TextLayoutStyle& st = out.style;
+    const fa::ParsedDa da = fa::ParseDa(ReadStrOrName(inherited("DA")));
+    st.font_key = da.font_key.empty() ? "Helv" : da.font_key;
+    st.size = da.font_key.empty() ? 12.0 : da.size;
+    st.color = da.color;
+    st.quadding = static_cast<int>(NumberOr(inherited("Q"), 0));
+    const auto ff = static_cast<std::int64_t>(NumberOr(inherited("Ff"), 0));
+    st.multiline = (ff & (1LL << 12)) != 0;
+    st.comb = (ff & (1LL << 24)) != 0;
+    out.password = (ff & (1LL << 13)) != 0;
+    st.max_len = static_cast<int>(NumberOr(inherited("MaxLen"), 0));
+
+    bool found = false;
+    if (acroform != nullptr) {
+        const fo::Dict dr = DictGet(*acroform, "DR")
+            ? ResolveDictCopy(*DictGet(*acroform, "DR"), dump) : fo::Dict{};
+        const fo::Dict fonts = DictGet(dr, "Font")
+            ? ResolveDictCopy(*DictGet(dr, "Font"), dump) : fo::Dict{};
+        if (const fo::Value* fv = DictGet(fonts, st.font_key)) {
+            const fo::Dict fd = ResolveDictCopy(*fv, dump);
+            const std::string sub = ReadStrOrName(DictGet(fd, "Subtype"));
+            if (sub == "Type1" || sub == "TrueType" || sub == "MMType1") {
+                out.font = *fv;
+                st.metrics.base_font =
+                    fa::MapFontName(ReadStrOrName(DictGet(fd, "BaseFont")))
+                        .base_font;
+                const auto* wv = resolve(DictGet(fd, "Widths"));
+                const auto* wa = wv ? std::get_if<fo::Array>(&wv->v) : nullptr;
+                if (wa != nullptr && !wa->items.empty()) {
+                    st.metrics.first_char = static_cast<int>(
+                        NumberOr(resolve(DictGet(fd, "FirstChar")), 0));
+                    for (const auto& x : wa->items)
+                        st.metrics.widths.push_back(NumberOr(resolve(&x), 0));
+                }
+                found = true;
+            }
+        }
+    }
+    if (!found) {
+        const fa::Standard14Face face = fa::MapFontName(st.font_key);
+        st.metrics.base_font = face.base_font;
+        fo::Dict fd;
+        fd.entries.emplace_back("Type", PageNameValue("Font"));
+        fd.entries.emplace_back("Subtype", PageNameValue("Type1"));
+        fd.entries.emplace_back("BaseFont", PageNameValue(face.base_font.c_str()));
+        out.font.v = std::move(fd);
+    }
+    return out;
+}
+
+}  // namespace
+
 std::vector<std::byte> Document::RemoveFieldsFromAcroForm(
         const std::vector<std::byte>& working,
         const std::set<std::uint32_t>& removed_widgets) const {
@@ -8832,6 +8955,14 @@ std::vector<std::byte> Document::AppendFlattenUpdate(
     for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
     std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
     std::vector<std::unique_ptr<std::vector<std::byte>>> bodies;
+    // The /AcroForm (for inherited /DA, /Q and /DR fonts), when present.
+    const fo::Dict* acroform = nullptr;
+    if (const auto* cat = FindObject(dump, trailer_bundle.root_id)) {
+        if (const auto* cd = std::get_if<fo::Dict>(&cat->value.v)) {
+            std::uint32_t acro_id = 0;
+            acroform = ResolveAcroForm(dump, DictGet(*cd, "AcroForm"), acro_id);
+        }
+    }
 
     auto num = [](const fo::Value& v) {
         if (const auto* d = std::get_if<double>(&v.v)) return *d;
@@ -8909,7 +9040,13 @@ std::vector<std::byte> Document::AppendFlattenUpdate(
         const char* font_key = fa::kTextFontKey;
         const char* base_font = fa::kTextBaseFont;
         if (ft == "Tx" || ft == "Ch") {
-            content = fa::TextBox(w, h, ReadStrOrName(inherited(widget, "V")));
+            FileTextStyle fs = FileFieldTextStyle(widget, dump, acroform);
+            std::string val = ReadStrOrName(inherited(widget, "V"));
+            if (fs.password) val = std::string(val.size(), '*');
+            return add_stream(
+                MakeAppearanceHeaderWithFont(w, h, fs.style.font_key,
+                                             std::move(fs.font)),
+                fa::TextField(w, h, val, fs.style));
         } else if (ft == "Btn") {
             const std::string as = ReadStrOrName(DictGet(widget, "AS"));
             const bool on = !as.empty() && as != "Off";
@@ -9374,14 +9511,35 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             } else if (auto* btn = dynamic_cast<F::ButtonField*>(fp)) {
                 content = fa::PushButton(w, h, btn->NormalCaption());
             } else {
+                // Text: laid out per the field's own /DA, /Q and flags.
                 std::string val = fp->Value();
                 if (auto* ch = dynamic_cast<F::ChoiceField*>(fp))
                     val = ch->Value();
-                content = fa::TextBox(w, h, val);
+                FileTextStyle fs = FileFieldTextStyle(wd, dump, existing_acro);
+                if (fs.password ||
+                    dynamic_cast<F::PasswordBoxField*>(fp) != nullptr)
+                    val = std::string(val.size(), '*');
+                const std::uint32_t id = next_id++;
+                foundation::pdf_writer_incremental::DirtyObject d;
+                ap_bodies.push_back(std::make_unique<std::vector<std::byte>>());
+                const std::string body = fa::TextField(w, h, val, fs.style);
+                ap_bodies.back()->assign(
+                    reinterpret_cast<const std::byte*>(body.data()),
+                    reinterpret_cast<const std::byte*>(body.data()) +
+                        body.size());
+                foundation::objects::Stream st;
+                st.header = MakeAppearanceHeaderWithFont(
+                    w, h, fs.style.font_key, std::move(fs.font));
+                st.body = std::span<const std::byte>(ap_bodies.back()->data(),
+                                                     ap_bodies.back()->size());
+                d.id = id; d.generation = 0; d.value.v = std::move(st);
+                dirty.push_back(std::move(d));
+                ap.entries.emplace_back("N", ref_v(id));
             }
-            ap.entries.emplace_back(
-                "N", ref_v(emit_ap(w, h, content, fa::kTextFontKey,
-                                   fa::kTextBaseFont)));
+            if (!content.empty())
+                ap.entries.emplace_back(
+                    "N", ref_v(emit_ap(w, h, content, fa::kTextFontKey,
+                                       fa::kTextBaseFont)));
         }
         for (auto it = wd.entries.begin(); it != wd.entries.end();) {
             if (it->first == "AP") it = wd.entries.erase(it);
