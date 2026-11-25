@@ -1766,6 +1766,102 @@ const foundation::objects::IndirectObject* FindObject(
     return nullptr;
 }
 
+std::string FmtNum(double v);
+
+// A FreeText appearance laid out as one line of styled runs.
+struct FreeTextSegment {
+    std::string font_key;  // resource name of the run's face
+    std::string text;
+};
+struct FreeTextLayout {
+    double size = 11.0;
+    // Resource name -> standard-14 base font; the regular face first.
+    std::vector<std::pair<std::string, std::string>> fonts;
+    std::vector<FreeTextSegment> segments;
+    std::string rich_text;  // /RC XHTML; empty when no run is styled
+};
+
+// Lay out `text` with the SetTextStyle runs ({from, to, style} in call
+// order, style = RichTextFontStyles: 1 italic, 2 bold) in the font family
+// named by `da` (Times* / Courier*, else Helvetica).
+FreeTextLayout LayOutFreeText(
+        const std::string& text, const std::vector<std::array<int, 3>>& runs,
+        const Aspose::Pdf::Annotations::DefaultAppearance& da) {
+    FreeTextLayout lay;
+    if (da.FontSize() > 0.0) lay.size = da.FontSize();
+    std::string family = da.FontName();
+    for (auto& c : family)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // Faces indexed by style bits: 0 regular, 1 italic, 2 bold, 3 both.
+    std::array<std::pair<std::string, std::string>, 4> faces;
+    if (family.find("times") != std::string::npos) {
+        faces = {{{"TiRo", "Times-Roman"}, {"TiIt", "Times-Italic"},
+                  {"TiBo", "Times-Bold"}, {"TiBI", "Times-BoldItalic"}}};
+    } else if (family.find("courier") != std::string::npos) {
+        faces = {{{"Cour", "Courier"}, {"CoOb", "Courier-Oblique"},
+                  {"CoBo", "Courier-Bold"}, {"CoBO", "Courier-BoldOblique"}}};
+    } else {
+        faces = {{{"Helv", "Helvetica"}, {"HeOb", "Helvetica-Oblique"},
+                  {"HeBo", "Helvetica-Bold"}, {"HeBO", "Helvetica-BoldOblique"}}};
+    }
+
+    // Per-character style; later runs override earlier ones.
+    const int n = static_cast<int>(text.size());
+    std::vector<int> style(static_cast<std::size_t>(n), 0);
+    for (const auto& r : runs) {
+        const int from = std::max(0, r[0]);
+        const int to = std::min(n, r[1]);
+        for (int i = from; i < to; ++i) style[static_cast<std::size_t>(i)] = r[2] & 3;
+    }
+
+    std::array<bool, 4> used{true, false, false, false};
+    std::string body;
+    auto xml_escape = [](const std::string& s) {
+        std::string o;
+        for (char c : s) {
+            if (c == '&') o += "&amp;";
+            else if (c == '<') o += "&lt;";
+            else if (c == '>') o += "&gt;";
+            else o += c;
+        }
+        return o;
+    };
+    bool styled = false;
+    for (int i = 0; i < n;) {
+        int j = i;
+        while (j < n && style[static_cast<std::size_t>(j)] ==
+                            style[static_cast<std::size_t>(i)])
+            ++j;
+        const int s = style[static_cast<std::size_t>(i)];
+        const std::string run = text.substr(static_cast<std::size_t>(i),
+                                            static_cast<std::size_t>(j - i));
+        used[static_cast<std::size_t>(s)] = true;
+        lay.segments.push_back({faces[static_cast<std::size_t>(s)].first, run});
+        if (s == 0) {
+            body += xml_escape(run);
+        } else {
+            styled = true;
+            std::string css;
+            if (s & 2) css += "font-weight:bold";
+            if (s & 1) css += std::string(css.empty() ? "" : ";") +
+                              "font-style:italic";
+            body += "<span style=\"" + css + "\">" + xml_escape(run) +
+                    "</span>";
+        }
+        i = j;
+    }
+    for (std::size_t k = 0; k < faces.size(); ++k)
+        if (used[k]) lay.fonts.push_back(faces[k]);
+    if (styled) {
+        lay.rich_text =
+            "<?xml version=\"1.0\"?><body xmlns=\"http://www.w3.org/1999/xhtml\""
+            " xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\""
+            " xfa:APIVersion=\"Acrobat:11.0.0\" xfa:spec=\"2.0.2\"><p>" +
+            body + "</p></body>";
+    }
+    return lay;
+}
+
 // A page's /Annots entries. /Annots may be an inline array or an indirect
 // reference to one (PDF §7.7.3.3); anything else yields an empty array.
 foundation::objects::Array PageAnnotsArray(
@@ -2120,12 +2216,29 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
     // (Acrobat does not synthesise markup appearances). Bodies are parked for
     // stable addresses (Stream.body is a non-owning span).
     std::vector<std::unique_ptr<std::vector<std::byte>>> ap_bodies;
+    using FontList = std::vector<std::pair<std::string, std::string>>;
     auto emit_annot_ap =
         [&](double llx, double lly, double urx, double ury,
             const std::string& content, bool need_font,
-            bool need_extgstate) -> std::uint32_t {
+            bool need_extgstate,
+            const FontList* font_list = nullptr) -> std::uint32_t {
         foundation::objects::Dict resources;
-        if (need_font) {
+        if (font_list != nullptr) {
+            // Explicit fonts: resource name -> standard-14 base font.
+            foundation::objects::Dict fonts;
+            for (const auto& [key, base] : *font_list) {
+                foundation::objects::Dict fi;
+                fi.entries.emplace_back("Type", PageNameValue("Font"));
+                fi.entries.emplace_back("Subtype", PageNameValue("Type1"));
+                fi.entries.emplace_back("BaseFont", PageNameValue(base.c_str()));
+                fi.entries.emplace_back("Encoding",
+                                        PageNameValue("WinAnsiEncoding"));
+                foundation::objects::Value v; v.v = std::move(fi);
+                fonts.entries.emplace_back(key, std::move(v));
+            }
+            foundation::objects::Value v; v.v = std::move(fonts);
+            resources.entries.emplace_back("Font", std::move(v));
+        } else if (need_font) {
             foundation::objects::Dict font_inner;
             font_inner.entries.emplace_back("Type", PageNameValue("Font"));
             font_inner.entries.emplace_back("Subtype", PageNameValue("Type1"));
@@ -2356,6 +2469,7 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                 };
                 std::ostringstream cs;
                 bool has_ap = true, need_font = false, need_extg = false;
+                FontList free_text_fonts;  // FreeText: its font family
                 // Stroke/fill colour: the annotation's authored Color when set
                 // (alpha > 0), else a per-type default.
                 const Aspose::Pdf::Color ac = ptr->Color();
@@ -2474,17 +2588,47 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                             set_arr("InkList", std::move(outer));
                         } else has_ap = false;
                         break;
-                    case AN::AnnotationType::FreeText:
-                        use_color(0, 0, 0); need_font = true;
+                    case AN::AnnotationType::FreeText: {
+                        use_color(0, 0, 0);
+                        const auto* ft =
+                            dynamic_cast<const AN::FreeTextAnnotation*>(ptr);
+                        std::vector<std::array<int, 3>> runs;
+                        for (const auto& r : ft->style_runs_)
+                            runs.push_back({r.from, r.to,
+                                            static_cast<int>(r.style)});
+                        const FreeTextLayout lay = LayOutFreeText(
+                            ft->Contents(), runs,
+                            ft->DefaultAppearanceObject());
+                        free_text_fonts = lay.fonts;
                         cs << "q 1 1 0.7 rg " << llx << ' ' << lly << ' ' << w
                            << ' ' << h << " re f 0 0 0 RG 1 w " << (llx + 0.5)
                            << ' ' << (lly + 0.5) << ' ' << (w - 1) << ' '
                            << (h - 1) << " re S " << rgb(cr, cg, cb)
-                           << " rg BT /Helv 11 Tf " << (llx + 6) << ' '
-                           << (lly + h / 2 - 4) << " Td (";
-                        esc(ptr->Contents());
-                        cs << ") Tj ET Q\n";
+                           << " rg BT " << (llx + 6) << ' '
+                           << (lly + h / 2 - lay.size * 0.35) << " Td ";
+                        for (const auto& seg : lay.segments) {
+                            cs << '/' << seg.font_key << ' ' << lay.size
+                               << " Tf (";
+                            esc(seg.text);
+                            cs << ") Tj ";
+                        }
+                        cs << "ET Q\n";
+                        foundation::objects::String da;
+                        da.bytes = EncodePdfString(
+                            "/" + lay.fonts.front().first + " " +
+                            FmtNum(lay.size) + " Tf " + rgb(cr, cg, cb) + " rg");
+                        da.kind = foundation::objects::StringKind::Literal;
+                        { foundation::objects::Value v; v.v = std::move(da);
+                          annot_dict->entries.emplace_back("DA", std::move(v)); }
+                        if (!lay.rich_text.empty()) {
+                            foundation::objects::String rc;
+                            rc.bytes = EncodePdfString(lay.rich_text);
+                            rc.kind = foundation::objects::StringKind::Literal;
+                            foundation::objects::Value v; v.v = std::move(rc);
+                            annot_dict->entries.emplace_back("RC", std::move(v));
+                        }
                         break;
+                    }
                     case AN::AnnotationType::Stamp: {
                         use_color(0, 0.5, 0); need_font = true;
                         const std::string label =
@@ -2506,7 +2650,8 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                 if (has_ap) {
                     set_arr("C", color_arr(cr, cg, cb));
                     const std::uint32_t apid = emit_annot_ap(
-                        llx, lly, urx, ury, cs.str(), need_font, need_extg);
+                        llx, lly, urx, ury, cs.str(), need_font, need_extg,
+                        free_text_fonts.empty() ? nullptr : &free_text_fonts);
                     foundation::objects::Dict apd;
                     foundation::objects::Value nref;
                     nref.v = foundation::objects::Ref{apid, 0};

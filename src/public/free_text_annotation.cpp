@@ -26,12 +26,7 @@ void FreeTextAnnotation::Accept(AnnotationSelector& visitor) {
 void FreeTextAnnotation::SetTextStyle(
         int fromInd, int toInd,
         RichTextFontStyles textStyles) {
-    // v1 stub — full rich-text-run mutation pipeline lands with
-    // a future appearance-stream generator beat. Stores nothing
-    // observable on the public surface.
-    (void)fromInd;
-    (void)toInd;
-    (void)textStyles;
+    style_runs_.push_back(StyleRun{fromInd, toInd, textStyles});
 }
 
 LineEnding FreeTextAnnotation::StartingStyle() const noexcept {

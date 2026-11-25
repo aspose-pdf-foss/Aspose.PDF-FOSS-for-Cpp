@@ -38,10 +38,12 @@ public:
 
     void Accept(AnnotationSelector& visitor) override;
 
-    // Apply RichTextFontStyles over the rich-text run between
-    // fromInd and toInd (canonical inclusive-exclusive
-    // semantics). The Drawing.Color-typed overload drops via
-    // translations cascade.
+    // Apply RichTextFontStyles to the characters [fromInd, toInd) of
+    // Contents(). A later call overrides an earlier one where they
+    // overlap; indices are clamped to the text and an empty range is
+    // ignored. On Save the styled runs are drawn with the bold / italic
+    // face of the DefaultAppearance font family and written to /RC. The
+    // Drawing.Color-typed overload drops via translations cascade.
     void SetTextStyle(int fromInd, int toInd,
                       RichTextFontStyles textStyles);
 
@@ -95,6 +97,15 @@ private:
     std::vector<Aspose::Pdf::Point> callout_;
     Aspose::Pdf::Rectangle text_rectangle_
         = Aspose::Pdf::Rectangle::Trivial();
+
+    // SetTextStyle calls in order, applied to Contents() at Save.
+    struct StyleRun {
+        int from;
+        int to;
+        RichTextFontStyles style;
+    };
+    std::vector<StyleRun> style_runs_;
+    friend class Aspose::Pdf::Document;
 };
 
 }  // namespace Aspose::Pdf::Annotations
