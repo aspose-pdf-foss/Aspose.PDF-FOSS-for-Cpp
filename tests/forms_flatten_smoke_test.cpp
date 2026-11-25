@@ -23,6 +23,8 @@
 #include <aspose/pdf/forms/checkbox_field.hpp>
 #include <aspose/pdf/forms/field.hpp>
 #include <aspose/pdf/forms/form.hpp>
+#include <aspose/pdf/forms/list_box_field.hpp>
+#include <aspose/pdf/forms/radio_button_field.hpp>
 #include <aspose/pdf/forms/text_box_field.hpp>
 #include <aspose/pdf/page.hpp>
 #include <aspose/pdf/page_collection.hpp>
@@ -550,5 +552,48 @@ TEST(FormsFlatten, FlattenNoFields) {
     Document re{out};
     EXPECT_EQ(re.Pages().Count(), 1u);
     EXPECT_EQ(re.Form().Count(), 0);
+    std::filesystem::remove(out);
+}
+
+TEST(FormsFlatten, FlattenRadioGroupShowsSelectedOption) {
+    const std::string out = TmpPath("radio");
+    {
+        Document doc{HelloWorldPdf()};
+        Aspose::Pdf::Forms::RadioButtonField rb{doc};
+        rb.AddOption("a", Rect(100, 300, 120, 320));
+        rb.AddOption("b", Rect(200, 300, 220, 320));
+        rb.Value("b");
+        doc.Form().Add(rb, "color", 1);
+        doc.Form().Flatten();
+        doc.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(FlattenedCount(p), 2);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 0);
+    Document re{out};
+    const auto img = Render(re, 1);
+    EXPECT_GT(DarkPixels(img, 200, 300, 220, 320),
+              DarkPixels(img, 100, 300, 120, 320) + 20);
+    std::filesystem::remove(out);
+}
+
+TEST(FormsFlatten, FlattenListBoxShowsSelection) {
+    const std::string out = TmpPath("list");
+    {
+        Document doc{HelloWorldPdf()};
+        Aspose::Pdf::Forms::ListBoxField lb{doc, Rect(100, 200, 200, 260)};
+        lb.AddOption("one");
+        lb.AddOption("two");
+        lb.Selected(1);
+        doc.Form().Add(lb, "pick", 1);
+        doc.Form().Flatten();
+        doc.Save(out);
+    }
+    EXPECT_EQ(FlattenedCount(ParsePage(ReadFile(out), 0)), 1);
+    Document re{out};
+    const int highlight =
+        CountPixels(Render(re, 1), 100, 200, 200, 260, 2.0,
+                    [](int r, int, int b) { return b > r + 50; });
+    EXPECT_GT(highlight, 20);
     std::filesystem::remove(out);
 }
