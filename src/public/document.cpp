@@ -1755,6 +1755,23 @@ const foundation::objects::IndirectObject* FindObject(
     return nullptr;
 }
 
+// A page's /Annots entries. /Annots may be an inline array or an indirect
+// reference to one (PDF §7.7.3.3); anything else yields an empty array.
+foundation::objects::Array PageAnnotsArray(
+        const foundation::objects::Dict& page,
+        const foundation::objects::Dump& dump) {
+    const auto* v = DictGet(page, "Annots");
+    if (v == nullptr) return {};
+    if (const auto* r = std::get_if<foundation::objects::Ref>(&v->v)) {
+        const auto* obj = FindObject(dump, r->id);
+        v = obj ? &obj->value : nullptr;
+        if (v == nullptr) return {};
+    }
+    if (const auto* a = std::get_if<foundation::objects::Array>(&v->v))
+        return *a;
+    return {};
+}
+
 bool HasFlateFilter(const foundation::objects::Dict& header) {
     auto* filter = DictGet(header, "Filter");
     if (filter == nullptr) return false;
@@ -2190,16 +2207,10 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         for (const auto& [annot, id] : slot->loaded_ids_)
             if (!present_loaded.count(id)) removed_loaded_ids.insert(id);
         foundation::objects::Array annots_arr;
-        if (const auto* a = DictGet(*page_dict_in, "Annots")) {
-            if (const auto* arr =
-                    std::get_if<foundation::objects::Array>(&a->v)) {
-                for (const auto& it : arr->items) {
-                    const auto* ref =
-                        std::get_if<foundation::objects::Ref>(&it.v);
-                    if (ref && removed_loaded_ids.count(ref->id)) continue;
-                    annots_arr.items.push_back(it);
-                }
-            }
+        for (const auto& it : PageAnnotsArray(*page_dict_in, dump).items) {
+            const auto* ref = std::get_if<foundation::objects::Ref>(&it.v);
+            if (ref && removed_loaded_ids.count(ref->id)) continue;
+            annots_arr.items.push_back(it);
         }
 
         // Emit each newly-added annotation as a new object.
@@ -7676,12 +7687,10 @@ void Document::LoadPageAnnotations(
         page_obj ? std::get_if<foundation::objects::Dict>(&page_obj->value.v)
                  : nullptr;
     if (page_dict == nullptr) return;
-    const auto* annots = DictGet(*page_dict, "Annots");
-    const auto* annots_arr =
-        annots ? std::get_if<foundation::objects::Array>(&annots->v) : nullptr;
-    if (annots_arr == nullptr) return;
+    const foundation::objects::Array annots_arr =
+        PageAnnotsArray(*page_dict, dump);
 
-    for (const auto& item : annots_arr->items) {
+    for (const auto& item : annots_arr.items) {
         const auto* ref = std::get_if<foundation::objects::Ref>(&item.v);
         if (ref == nullptr) continue;
         const auto* aobj = FindObject(dump, ref->id);
@@ -9458,16 +9467,12 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
                      : nullptr;
         if (page_dict == nullptr) continue;
         foundation::objects::Dict updated = *page_dict;
-        foundation::objects::Array annots;
+        foundation::objects::Array annots = PageAnnotsArray(*page_dict, dump);
         for (auto it = updated.entries.begin(); it != updated.entries.end();) {
-            if (it->first == "Annots") {
-                if (auto* a = std::get_if<foundation::objects::Array>(
-                        &it->second.v))
-                    annots = *a;
+            if (it->first == "Annots")
                 it = updated.entries.erase(it);
-            } else {
+            else
                 ++it;
-            }
         }
         for (std::uint32_t rid : refs) {
             foundation::objects::Value v;
@@ -9657,13 +9662,7 @@ void Document::SignInternal(const SignatureRequest& req) {
             // Merge the field ref into page 1 /Annots.
             if (page_dict_in != nullptr) {
                 foundation::objects::Dict page = *page_dict_in;
-                foundation::objects::Array annots;
-                if (const auto* a = DictGet(page, "Annots")) {
-                    if (const auto* arr =
-                            std::get_if<foundation::objects::Array>(&a->v)) {
-                        annots = *arr;
-                    }
-                }
+                foundation::objects::Array annots = PageAnnotsArray(page, dump);
                 annots.items.push_back(SigRefVal(field_id));
                 for (auto it = page.entries.begin();
                      it != page.entries.end();) {

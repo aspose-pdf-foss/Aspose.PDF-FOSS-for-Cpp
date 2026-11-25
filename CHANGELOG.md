@@ -42,6 +42,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - Adding or deleting an annotation on a page of a loaded document no longer drops the page's other
   annotations that the annotation collection does not model, such as form field widgets, popups
   and FreeText/Ink/Line/Polygon annotations. Previously the form fields on that page disappeared.
+- A page whose `/Annots` is an indirect reference to an array (`/Annots 4 0 R`) is now handled
+  like an inline array: its annotations are loaded, and adding an annotation, adding a form field
+  or signing keeps them. Previously they were not loaded and were dropped on save.
 
 ## [1.0.1] - 2026-09-29
 
