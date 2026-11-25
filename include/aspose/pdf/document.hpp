@@ -75,6 +75,7 @@ namespace Facades { class PdfFileStamp; }
 namespace Facades { class PdfFileSignature; }
 namespace Facades { class PdfContentEditor; }
 namespace Facades { class PdfExtractor; }
+namespace Facades { class PdfAnnotationEditor; }
 
 class Document {
 public:
@@ -361,6 +362,7 @@ private:
     friend class Aspose::Pdf::Facades::PdfFileSignature;
     friend class Aspose::Pdf::Facades::PdfContentEditor;
     friend class Aspose::Pdf::Facades::PdfExtractor;
+    friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
 
     // v1.1 metadata write-through. Builds the dirty list for an
     // incremental /Metadata stream update over the supplied
@@ -439,6 +441,7 @@ private:
     // id (or /Parent id) is listed, and/or page + subtype rules.
     struct FlattenRequest {
         bool all_widgets = false;
+        bool hide_buttons = false;  // with all_widgets: drop push buttons
         std::set<std::uint32_t> ids;
         struct Rule {
             int first_page = 1;   // 1-based, inclusive
@@ -822,6 +825,10 @@ private:
     // Pending TextFragment text edits (Text setter on search results),
     // flushed by AppendTextEditsUpdate at Save().
     std::vector<TextEdit> pending_text_edits_;
+    // Page + subtype flatten rules staged by
+    // PdfAnnotationEditor::FlatteningAnnotations; applied at Save after the
+    // annotation and form passes.
+    std::vector<FlattenRequest::Rule> pending_flatten_rules_;
 
     // A staged redaction overlay (cover box + overlay text), flushed by
     // AppendRedactionsUpdate at Save(). The text under the region is removed

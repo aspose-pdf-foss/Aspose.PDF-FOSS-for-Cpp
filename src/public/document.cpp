@@ -1524,7 +1524,8 @@ void Document::Save(const std::string& outputFileName) const {
         && !named_dests_dirty && !page_labels_dirty && !acroform_dirty
         && !page_geom_dirty_ && !outlines_dirty_ && !encrypt_requested_
         && !text_edits_dirty && !optimize_requested_ && !paragraphs_dirty
-        && !images_dirty && !artifacts_dirty && !redactions_dirty) {
+        && !images_dirty && !artifacts_dirty && !redactions_dirty
+        && pending_flatten_rules_.empty()) {
         WriteAll(outputFileName,
                  std::span<const std::byte>(bytes_.data(), bytes_.size()));
         return;
@@ -1594,6 +1595,14 @@ void Document::Save(const std::string& outputFileName) const {
 
     if (acroform_dirty) {
         working = AppendAcroFormUpdate(working);
+    }
+
+    if (!pending_flatten_rules_.empty()) {
+        FlattenRequest req;
+        req.rules = pending_flatten_rules_;
+        std::set<std::uint32_t> removed;
+        working = AppendFlattenUpdate(working, req, &removed);
+        working = RemoveFieldsFromAcroForm(working, removed);
     }
 
     if (text_edits_dirty) {
@@ -8514,6 +8523,7 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
     fields.insert(fields.end(), single.begin(), single.end());
     FlattenRequest all_widgets;
     all_widgets.all_widgets = true;
+    all_widgets.hide_buttons = form_->flatten_hide_buttons_;
     return RemoveCatalogAcroForm(AppendFlattenUpdate(
         AppendAcroFormFieldsUpdate(working, fields), all_widgets));
 }
@@ -8829,6 +8839,7 @@ std::vector<std::byte> Document::AppendFlattenUpdate(
                 (item_id != 0 && req.ids.count(item_id)) ||
                 (parent_id != 0 && req.ids.count(parent_id))) {
                 sel = Sel::Explicit;
+                hide_buttons = is_widget && req.all_widgets && req.hide_buttons;
             } else {
                 for (const auto& rule : req.rules) {
                     const int last =

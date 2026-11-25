@@ -38,6 +38,7 @@ namespace Aspose::Pdf {
 class Document;
 class Page;
 }
+namespace Aspose::Pdf::Facades { class PdfAnnotationEditor; }
 
 namespace Aspose::Pdf::Forms {
 
@@ -194,6 +195,10 @@ private:
     std::vector<Field*> flatten_single_;
     friend class Field;
     void FlattenField(Field& field);
+    // Set by PdfAnnotationEditor::FlatteningAnnotations(FlattenSettings)
+    // with HideButtons: the Flatten() pass drops push buttons undrawn.
+    friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
+    bool flatten_hide_buttons_ = false;
 
     std::vector<Field*> fields_;
     // 1-based page number a newly-added field's widget belongs on, recorded

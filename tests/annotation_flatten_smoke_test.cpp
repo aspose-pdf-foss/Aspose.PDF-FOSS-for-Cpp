@@ -7,9 +7,12 @@
 #include <string>
 
 #include <aspose/pdf/annotations/annotation_collection.hpp>
+#include <aspose/pdf/annotations/circle_annotation.hpp>
 #include <aspose/pdf/annotations/link_annotation.hpp>
 #include <aspose/pdf/annotations/square_annotation.hpp>
 #include <aspose/pdf/document.hpp>
+#include <aspose/pdf/facades/pdf_annotation_editor.hpp>
+#include <aspose/pdf/forms/button_field.hpp>
 #include <aspose/pdf/forms/field.hpp>
 #include <aspose/pdf/forms/form.hpp>
 #include <aspose/pdf/forms/radio_button_field.hpp>
@@ -228,5 +231,144 @@ TEST(FieldFlatten, RadioFieldFlattenBurnsAllKids) {
     Document re{out};
     EXPECT_EQ(re.Form().Count(), 1);
     EXPECT_NE(FieldByName(re, "t"), nullptr);
+    std::filesystem::remove(out);
+}
+
+// ---- PdfAnnotationEditor::FlatteningAnnotations ----------------------------
+
+namespace {
+
+std::string TwoPagesPdf() {
+    return (std::filesystem::path(__FILE__).parent_path() / "fixtures" /
+            "text_extractor" / "two_pages.pdf")
+        .string();
+}
+
+}  // namespace
+
+TEST(EditorFlatten, FlattenAllBurnsAnnotationsAndFields) {
+    const std::string src = TmpPath("ed_all_src");
+    const std::string out = TmpPath("ed_all_out");
+    {
+        Document doc{HelloWorldPdf()};
+        auto page = doc.Pages()[1];
+        Annotations::SquareAnnotation sq{page, Rect(200, 200, 260, 260)};
+        page.Annotations().Add(sq);
+        Forms::TextBoxField f{doc, Rect(100, 400, 300, 420)};
+        f.Value("Field");
+        doc.Form().Add(f, "f", 1);
+        doc.Save(src);
+    }
+    {
+        Document doc{src};
+        Facades::PdfAnnotationEditor ed{doc};
+        ed.FlatteningAnnotations();
+        doc.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Square"), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 0);
+    EXPECT_EQ(Get(p.catalog, "AcroForm"), nullptr);
+    EXPECT_EQ(FlattenedCount(p), 2);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(EditorFlatten, FlattenByTypeAndPage) {
+    const std::string src = TmpPath("ed_type_src");
+    const std::string out = TmpPath("ed_type_out");
+    {
+        Document doc{TwoPagesPdf()};
+        auto p1 = doc.Pages()[1];
+        auto p2 = doc.Pages()[2];
+        Annotations::SquareAnnotation s1{p1, Rect(200, 200, 260, 260)};
+        Annotations::CircleAnnotation c1{p1, Rect(300, 200, 360, 260)};
+        Annotations::SquareAnnotation s2{p2, Rect(200, 200, 260, 260)};
+        p1.Annotations().Add(s1);
+        p1.Annotations().Add(c1);
+        p2.Annotations().Add(s2);
+        doc.Save(src);
+    }
+    {
+        Document doc{src};
+        Facades::PdfAnnotationEditor ed{doc};
+        ed.FlatteningAnnotations(1, 1, {Annotations::AnnotationType::Square});
+        doc.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    const Parsed p1 = ParsePage(bytes, 0);
+    const Parsed p2 = ParsePage(bytes, 1);
+    EXPECT_EQ(CountSubtype(p1, "Square"), 0);
+    EXPECT_EQ(CountSubtype(p1, "Circle"), 1);
+    EXPECT_EQ(FlattenedCount(p1), 1);
+    EXPECT_EQ(CountSubtype(p2, "Square"), 1);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(EditorFlatten, FlattenWidgetTypeRemovesField) {
+    const std::string src = TmpPath("ed_widget_src");
+    const std::string out = TmpPath("ed_widget_out");
+    {
+        Document doc{HelloWorldPdf()};
+        Forms::TextBoxField f{doc, Rect(100, 400, 300, 420)};
+        f.Value("Field");
+        doc.Form().Add(f, "f", 1);
+        doc.Save(src);
+    }
+    {
+        Document doc{src};
+        Facades::PdfAnnotationEditor ed{doc};
+        ed.FlatteningAnnotations(1, 1, {Annotations::AnnotationType::Widget});
+        doc.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 0);
+    EXPECT_EQ(FlattenedCount(p), 1);
+    Document re{out};
+    EXPECT_EQ(re.Form().Count(), 0);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(EditorFlatten, FlattenOutOfRangePages) {
+    const std::string src = TmpPath("ed_range_src");
+    const std::string out = TmpPath("ed_range_out");
+    SaveWithSquare(src);
+    {
+        Document doc{src};
+        Facades::PdfAnnotationEditor ed{doc};
+        ed.FlatteningAnnotations(5, 9, {Annotations::AnnotationType::Square});
+        EXPECT_NO_THROW(doc.Save(out));
+    }
+    EXPECT_EQ(CountSubtype(ParsePage(ReadFile(out), 0), "Square"), 1);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(EditorFlatten, HideButtonsDropsPushButtons) {
+    const std::string src = TmpPath("ed_btn_src");
+    const std::string out = TmpPath("ed_btn_out");
+    {
+        Document doc{HelloWorldPdf()};
+        Forms::ButtonField b{doc, Rect(100, 300, 200, 330)};
+        Forms::TextBoxField f{doc, Rect(100, 400, 300, 420)};
+        f.Value("Field");
+        doc.Form().Add(b, "b", 1);
+        doc.Form().Add(f, "f", 1);
+        doc.Save(src);
+    }
+    {
+        Document doc{src};
+        Facades::PdfAnnotationEditor ed{doc};
+        Forms::Form::FlattenSettings s;
+        s.HideButtons(true);
+        ed.FlatteningAnnotations(s);
+        doc.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 0);
+    EXPECT_EQ(FlattenedCount(p), 1);
+    std::filesystem::remove(src);
     std::filesystem::remove(out);
 }
