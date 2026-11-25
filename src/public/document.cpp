@@ -7598,6 +7598,7 @@ FieldKind FieldKindOf(const Aspose::Pdf::Forms::Field& field) {
     if (const auto* tx = dynamic_cast<const F::TextBoxField*>(&field)) {
         std::int64_t ff = 0;
         if (tx->Multiline()) ff |= 1LL << 12;  // /Multiline
+        if (tx->ForceCombs()) ff |= 1LL << 24;  // /Comb
         return {"Tx", ff};
     }
     // ChoiceField / ChoiceField subtree fallback / unknown Field
@@ -9488,6 +9489,44 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
     // Widget keys for one rendition of `fp` at `r` on page `page_id`
     // (0 = unbound): /Rect, /P, /DA, Print flag, border + background,
     // and a pre-rendered /AP so viewers (e.g. Acrobat) draw it.
+    // Fonts the new fields' /DA use, added to /AcroForm /DR below.
+    std::map<std::string, std::string> dr_faces;
+    // Text layout of a new field: font and size from its
+    // DefaultAppearance (unset -> Helv 12; size 0 = auto), quadding from
+    // TextHorizontalAlignment, multi-line / comb / MaxLen for text boxes.
+    auto new_text_style = [&](Aspose::Pdf::Forms::Field* fp) {
+        namespace F = Aspose::Pdf::Forms;
+        fa::TextLayoutStyle st;
+        const auto& da = fp->DefaultAppearance();
+        const fa::Standard14Face face = da.FontName().empty()
+            ? fa::Standard14Face{"Helv", "Helvetica"}
+            : fa::MapFontName(da.FontName());
+        st.font_key = face.key;
+        st.metrics.base_font = face.base_font;
+        st.size = da.FontSize();
+        switch (fp->TextHorizontalAlignment()) {
+            case Aspose::Pdf::HorizontalAlignment::Center: st.quadding = 1; break;
+            case Aspose::Pdf::HorizontalAlignment::Right:  st.quadding = 2; break;
+            default: break;
+        }
+        if (auto* tx = dynamic_cast<F::TextBoxField*>(fp)) {
+            st.multiline = tx->Multiline();
+            st.comb = tx->ForceCombs();
+            st.max_len = tx->MaxLen();
+        }
+        return st;
+    };
+    auto da_of = [](const fa::TextLayoutStyle& st) {
+        std::ostringstream o;
+        o << '/' << st.font_key << ' ' << st.size << " Tf " << st.color;
+        return o.str();
+    };
+    // The text a field's appearance shows: a password as asterisks.
+    auto shown_value = [](Aspose::Pdf::Forms::Field* fp, std::string val) {
+        if (dynamic_cast<Aspose::Pdf::Forms::PasswordBoxField*>(fp) != nullptr)
+            return std::string(val.size(), '*');
+        return val;
+    };
     auto append_widget = [&](foundation::objects::Dict& wd,
                              Aspose::Pdf::Forms::Field* fp,
                              const Aspose::Pdf::Rectangle& r,
@@ -9509,7 +9548,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         const double w = r.URX() - r.LLX();
         const double h = r.URY() - r.LLY();
         wd.entries.emplace_back(
-            "DA", str_v(is_checkbox ? "/ZaDb 0 Tf 0 g" : "/Helv 12 Tf 0 g"));
+            "DA", str_v(is_checkbox ? std::string("/ZaDb 0 Tf 0 g")
+                                        : da_of(new_text_style(fp))));
         wd.entries.emplace_back("F", int_v(4));  // Print
         if (w <= 0.0 || h <= 0.0) return;
         foundation::objects::Dict ap;
@@ -9546,9 +9586,13 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             std::string val = fp->Value();
             if (auto* ch = dynamic_cast<Aspose::Pdf::Forms::ChoiceField*>(fp))
                 val = ch->Value();
+            const fa::TextLayoutStyle st = new_text_style(fp);
+            dr_faces[st.font_key] = st.metrics.base_font;
             ap.entries.emplace_back(
-                "N", ref_v(emit_ap(w, h, fa::TextBox(w, h, val), "Helv",
-                                   "Helvetica")));
+                "N", ref_v(emit_ap(w, h,
+                                   fa::TextField(w, h, shown_value(fp, val), st),
+                                   st.font_key.c_str(),
+                                   st.metrics.base_font.c_str())));
         }
         wd.entries.emplace_back("AP", dict_v(std::move(ap)));
         foundation::objects::Dict bs;
@@ -9866,6 +9910,13 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             v.v = ff;
             d.entries.emplace_back("Ff", std::move(v));
         }
+        {
+            const fa::TextLayoutStyle st = new_text_style(fp);
+            if (st.quadding != 0)
+                d.entries.emplace_back("Q", int_v(st.quadding));
+            if (st.max_len > 0)
+                d.entries.emplace_back("MaxLen", int_v(st.max_len));
+        }
 
         std::uint32_t field_obj_id = 0;
         auto rit = form_->renditions_.find(fp);
@@ -9897,7 +9948,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             const bool is_checkbox =
                 dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp) != nullptr;
             d.entries.emplace_back(
-                "DA", str_v(is_checkbox ? "/ZaDb 0 Tf 0 g" : "/Helv 12 Tf 0 g"));
+                "DA", str_v(is_checkbox ? std::string("/ZaDb 0 Tf 0 g")
+                                        : da_of(new_text_style(fp))));
             field_obj_id = next_id++;
             foundation::objects::Array kids;
             for (const auto& rend : rit->second) {
@@ -9955,26 +10007,44 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             if (e.first == k) return true;
         return false;
     };
-    if (!acro_has("DR")) {
-        auto base_font = [](const char* key, const char* base) {
+    {
+        // /DR /Font must resolve every /DA font: Helv and ZaDb always, plus
+        // the faces new fields use. Existing entries are kept as they are.
+        foundation::objects::Dict dr;
+        for (const auto& e : acroform_dict.entries)
+            if (e.first == "DR") dr = ResolveDictCopy(e.second, dump);
+        foundation::objects::Dict fonts;
+        for (const auto& e : dr.entries)
+            if (e.first == "Font") fonts = ResolveDictCopy(e.second, dump);
+        std::map<std::string, std::string> want = dr_faces;
+        want.emplace("Helv", "Helvetica");
+        want.emplace("ZaDb", "ZapfDingbats");
+        bool added = false;
+        for (const auto& [key, base] : want) {
+            if (DictGet(fonts, key) != nullptr) continue;
             foundation::objects::Dict f;
             f.entries.emplace_back("Type", PageNameValue("Font"));
             f.entries.emplace_back("Subtype", PageNameValue("Type1"));
-            f.entries.emplace_back("BaseFont", PageNameValue(base));
-            return std::make_pair(std::string(key), std::move(f));
-        };
-        foundation::objects::Dict fonts;
-        { auto [k, f] = base_font("Helv", "Helvetica");
-          foundation::objects::Value v; v.v = std::move(f);
-          fonts.entries.emplace_back(k, std::move(v)); }
-        { auto [k, f] = base_font("ZaDb", "ZapfDingbats");
-          foundation::objects::Value v; v.v = std::move(f);
-          fonts.entries.emplace_back(k, std::move(v)); }
-        foundation::objects::Dict dr;
-        { foundation::objects::Value v; v.v = std::move(fonts);
-          dr.entries.emplace_back("Font", std::move(v)); }
-        foundation::objects::Value v; v.v = std::move(dr);
-        acroform_dict.entries.emplace_back("DR", std::move(v));
+            f.entries.emplace_back("BaseFont", PageNameValue(base.c_str()));
+            foundation::objects::Value v; v.v = std::move(f);
+            fonts.entries.emplace_back(key, std::move(v));
+            added = true;
+        }
+        if (added) {
+            for (auto it = dr.entries.begin(); it != dr.entries.end();) {
+                if (it->first == "Font") it = dr.entries.erase(it);
+                else ++it;
+            }
+            { foundation::objects::Value v; v.v = std::move(fonts);
+              dr.entries.emplace_back("Font", std::move(v)); }
+            for (auto it = acroform_dict.entries.begin();
+                 it != acroform_dict.entries.end();) {
+                if (it->first == "DR") it = acroform_dict.entries.erase(it);
+                else ++it;
+            }
+            foundation::objects::Value v; v.v = std::move(dr);
+            acroform_dict.entries.emplace_back("DR", std::move(v));
+        }
     }
     if (!acro_has("DA")) {
         foundation::objects::String ps;
