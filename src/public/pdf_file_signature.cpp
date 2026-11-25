@@ -8,6 +8,7 @@
 #include <aspose/pdf/document.hpp>
 #include <aspose/pdf/forms/signature.hpp>
 
+#include "_pending.hpp"
 #include "pkcs7_sign.hpp"
 
 namespace Aspose::Pdf::Facades {
@@ -218,9 +219,14 @@ bool PdfFileSignature::VerifySigned(const std::string& sigName) {
 bool PdfFileSignature::VerifySignature(const std::string& sigName) {
     if (document_ == nullptr) return false;
     for (const auto& s : document_->ReadSignaturesInternal()) {
-        if (s.field_name == sigName) return s.has_value && s.covers_whole;
+        if (s.field_name != sigName) continue;
+        if (!s.has_value) return false;  // blank signature field
+        // A signature is present, but there is no cryptographic check yet
+        // (no PKCS#7 / X.509 parsing or RSA verify). Throw rather than
+        // report a signature as valid from its presence alone.
+        PENDING("signature-verification");
     }
-    return false;
+    return false;  // no such signature
 }
 bool PdfFileSignature::VerifySignature(const SignatureName& sigName) {
     return VerifySignature(sigName.Name);

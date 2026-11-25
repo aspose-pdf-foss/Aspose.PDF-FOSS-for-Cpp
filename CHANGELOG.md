@@ -20,6 +20,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - `Forms::Signature::Verify()` now throws `std::logic_error` instead of always returning `true`.
   The library has no signature verification yet, so the old result reported unchecked signatures
   as valid.
+- `PdfFileSignature::VerifySignature` and `VerifySigned` throw `std::logic_error` for a present
+  signature instead of returning `true` when it merely existed and covered the whole file. They
+  still return `false` for an unknown name or a blank signature field.
 
 ### Fixed
 

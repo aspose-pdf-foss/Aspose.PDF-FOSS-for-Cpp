@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -213,7 +214,16 @@ TEST(FacadesPdfFileSignatureRealSigning, SignAddsReadableSignature) {
     EXPECT_EQ(reader.GetContactInfo("Signature1"), "signer@example.com");
     EXPECT_EQ(reader.GetLocation("Signature1"), "Prague");
     EXPECT_TRUE(reader.CoversWholeDocument("Signature1"));
-    EXPECT_TRUE(reader.VerifySignature("Signature1"));
+    // No cryptographic verification exists yet, so a present signature
+    // must not be reported as valid: Verify* throws std::logic_error.
+    EXPECT_THROW(reader.VerifySignature("Signature1"), std::logic_error);
+    EXPECT_THROW(reader.VerifySigned("Signature1"), std::logic_error);
+    SignatureName signedName;
+    signedName.FullName = "Signature1";
+    signedName.Name = "Signature1";
+    EXPECT_THROW(reader.VerifySignature(signedName), std::logic_error);
+    // A name with no signature is still a plain `false`.
+    EXPECT_FALSE(reader.VerifySignature("NoSuchSignature"));
 
     auto sn = reader.GetSignatureNames(false);
     ASSERT_EQ(sn.size(), 1u);

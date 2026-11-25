@@ -105,6 +105,10 @@ public:
 
     // ---- Verify / read ----
 
+    // v1: returns false when `sigName` has no signature (unknown name or
+    // blank field). For a present signature it throws std::logic_error:
+    // there is no cryptographic verification yet, and presence alone is
+    // not reported as valid.
     bool VerifySigned(const std::string& sigName);
     bool VerifySignature(const std::string& sigName);
     bool VerifySignature(const SignatureName& sigName);
