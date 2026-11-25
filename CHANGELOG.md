@@ -32,6 +32,13 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   `std::out_of_range`.
 - `PdfFileInfo(path, password)` now opens encrypted files with the given password; a wrong
   password throws `std::runtime_error`. Previously the password was ignored.
+- `Form::Flatten()` no longer loses field values. On `Save()` each visible widget's appearance is
+  drawn into its page content, the widgets are removed from the page, and `/AcroForm` is removed
+  from the catalog. Fields loaded from the file keep their own appearance unless their value was
+  changed. Previously the fields and their values were simply dropped.
+- Changing the value of a field loaded from a file now also regenerates its appearance (`/AP`),
+  so viewers show the new value instead of the old one. Check boxes keep the name of their own
+  "on" state instead of always using `/Yes`.
 
 ## [1.0.1] - 2026-09-29
 
