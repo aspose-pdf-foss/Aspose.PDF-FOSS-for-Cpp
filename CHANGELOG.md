@@ -11,6 +11,17 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `FormEditor` now edits fields instead of ignoring the calls: `SetFieldAttribute`,
+  `SetFieldAppearance` / `GetFieldAppearance`, `SetFieldLimit`, `SetFieldCombNumber`, `MoveField`,
+  `Single2Multiple`, `SetFieldAlignment` / `SetFieldAlignmentV`, `RenameField`, `AddListItem` /
+  `DelListItem`, `CopyInnerField`, `CopyOuterField` (from another PDF) and `DecorateField` (font,
+  size, alignment, caption, items and position from `FormFieldFacade`). `AddField` fills list,
+  combo and radio fields from `Items` (radio layout from `RadioHoriz`, `RadioGap`,
+  `RadioButtonItemSize`) and makes `MultiLineText` fields multi-line.
+- `FormEditor` actions: `SetFieldScript` / `AddFieldScript` (JavaScript on push buttons),
+  `SetSubmitUrl` / `SetSubmitFlag` and `AddSubmitBtn` (form submission to a URL as FDF, HTML,
+  XFDF or PDF), and `RemoveFieldAction`.
+
 - `PageCollection::Add(const Page&)` and `PageCollection::Insert(int, const Page&)` accept a page
   from another document: the page and the objects it reaches are deep-imported. Annotations and
   unsaved edits on the source page are not carried over.
@@ -43,6 +54,10 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- Edits to form fields loaded from a file are no longer lost on save. Previously only a changed
+  value was written; renaming, read-only / required / no-export, moving, multi-line, comb,
+  `MaxLen`, alignment, annotation flags, option lists and `DefaultAppearance` font and size were
+  silently dropped. Only the changed keys of the original object are rewritten.
 - `TextAbsorber` and `TextDevice` now extract text drawn inside Form XObjects (`/Name Do`), such as
   page headers from many PDF producers and form fields or annotations burned in by `Flatten`. Line
   breaks follow the real position on the page (`cm` and the form's `/Matrix`).
