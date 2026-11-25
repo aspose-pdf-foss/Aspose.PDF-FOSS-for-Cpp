@@ -183,8 +183,12 @@ private:
     // can detect a value edit and re-emit only the changed field objects.
     std::map<const Field*, std::string> loaded_values_;
     std::size_t loaded_count_ = 0;
-    // Set by Flatten() — Save removes the catalog /AcroForm.
+    // Set by Flatten() — Save writes the fields, burns every visible widget
+    // into its page content, then removes the catalog /AcroForm.
     bool flatten_requested_ = false;
+    // Fields captured by Flatten(): hidden from the user (fields_ is
+    // emptied) but still written by Save before the widgets are burned in.
+    std::vector<Field*> flatten_fields_;
 
     std::vector<Field*> fields_;
     // 1-based page number a newly-added field's widget belongs on, recorded

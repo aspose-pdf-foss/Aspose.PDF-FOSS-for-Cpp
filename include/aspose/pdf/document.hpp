@@ -67,7 +67,7 @@ class PageCollection;
 
 namespace Annotations { class AnnotationCollection; }
 namespace Annotations { class RedactionAnnotation; }
-namespace Forms { class Form; }
+namespace Forms { class Form; class Field; }
 namespace Facades { class PdfFileEditor; }
 namespace Facades { class PdfBookmarkEditor; }
 namespace Facades { class PdfFileStamp; }
@@ -420,7 +420,17 @@ private:
     // The widget refs are NOT added to page /Annots in v1 — that
     // page-binding step lands in a follow-on beat together with
     // pageNumber tracking on Form::Add.
+    // When Form::Flatten() was requested: write the captured fields
+    // (AppendAcroFormFieldsUpdate), then drop the catalog /AcroForm.
     std::vector<std::byte> AppendAcroFormUpdate(
+        const std::vector<std::byte>& working) const;
+    // The field-writing pass over `fields` (the form's current fields, or
+    // the ones captured by Flatten()).
+    std::vector<std::byte> AppendAcroFormFieldsUpdate(
+        const std::vector<std::byte>& working,
+        const std::vector<Aspose::Pdf::Forms::Field*>& fields) const;
+    // Remove /AcroForm from the catalog (no-op when absent).
+    std::vector<std::byte> RemoveCatalogAcroForm(
         const std::vector<std::byte>& working) const;
 
     // Load-on-open: read the existing /AcroForm /Fields into `form` —

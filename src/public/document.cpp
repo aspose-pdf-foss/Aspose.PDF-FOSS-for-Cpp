@@ -8401,12 +8401,58 @@ bool Document::ExtractAttachmentInternal(const std::string& name,
 
 std::vector<std::byte> Document::AppendAcroFormUpdate(
         const std::vector<std::byte>& working) const {
-    namespace fa = foundation::field_appearance;
     if (!form_) return working;
-    const bool flatten = form_->flatten_requested_;
-    if (form_->Count() == 0 && form_->loaded_count_ == 0 && !flatten) {
+    if (!form_->flatten_requested_)
+        return AppendAcroFormFieldsUpdate(working, form_->fields_);
+    std::vector<Aspose::Pdf::Forms::Field*> fields = form_->flatten_fields_;
+    fields.insert(fields.end(), form_->fields_.begin(), form_->fields_.end());
+    return RemoveCatalogAcroForm(AppendAcroFormFieldsUpdate(working, fields));
+}
+
+std::vector<std::byte> Document::RemoveCatalogAcroForm(
+        const std::vector<std::byte>& working) const {
+    auto working_span = std::span<const std::byte>(
+        working.data(), working.size());
+    foundation::trailer::Trailer trailer_bundle;
+    foundation::objects::Dump dump;
+    try {
+        trailer_bundle = foundation::trailer::Parse(working_span);
+        dump = foundation::objects::Parse(working_span);
+    } catch (const std::exception&) {
         return working;
     }
+    if (trailer_bundle.root_id == 0) return working;
+    const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+    const auto* catalog_dict =
+        catalog ? std::get_if<foundation::objects::Dict>(&catalog->value.v)
+                : nullptr;
+    if (catalog_dict == nullptr ||
+        DictGet(*catalog_dict, "AcroForm") == nullptr)
+        return working;
+    foundation::objects::Dict updated_catalog = *catalog_dict;
+    for (auto it = updated_catalog.entries.begin();
+         it != updated_catalog.entries.end();) {
+        if (it->first == "AcroForm")
+            it = updated_catalog.entries.erase(it);
+        else
+            ++it;
+    }
+    foundation::pdf_writer_incremental::DirtyObject cat_dirty;
+    cat_dirty.id = catalog->id;
+    cat_dirty.generation = catalog->generation;
+    cat_dirty.value.v = std::move(updated_catalog);
+    return foundation::pdf_writer_incremental::AppendIncremental(
+        working_span,
+        std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+            &cat_dirty, 1));
+}
+
+std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
+        const std::vector<std::byte>& working,
+        const std::vector<Aspose::Pdf::Forms::Field*>& fields) const {
+    namespace fa = foundation::field_appearance;
+    if (!form_) return working;
+    if (fields.empty() && form_->loaded_count_ == 0) return working;
 
     auto working_span = std::span<const std::byte>(
         working.data(), working.size());
@@ -8440,27 +8486,6 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         std::get_if<foundation::objects::Dict>(&catalog->value.v);
     if (catalog_dict == nullptr) return working;
 
-    // Flatten: strip /AcroForm from the catalog and stop. (Widget /Annots
-    // are left in place — v1 has no appearance generator to burn values in.)
-    if (flatten) {
-        if (DictGet(*catalog_dict, "AcroForm") == nullptr) return working;
-        foundation::objects::Dict updated_catalog = *catalog_dict;
-        for (auto it = updated_catalog.entries.begin();
-             it != updated_catalog.entries.end();) {
-            if (it->first == "AcroForm")
-                it = updated_catalog.entries.erase(it);
-            else
-                ++it;
-        }
-        foundation::pdf_writer_incremental::DirtyObject cat_dirty;
-        cat_dirty.id = catalog->id;
-        cat_dirty.generation = catalog->generation;
-        cat_dirty.value.v = std::move(updated_catalog);
-        return foundation::pdf_writer_incremental::AppendIncremental(
-            working_span,
-            std::span<const foundation::pdf_writer_incremental::DirtyObject>(
-                &cat_dirty, 1));
-    }
 
     // Resolve any existing /AcroForm (ref or inline) + its current
     // /Fields refs. Loaded fields are preserved by reusing those refs;
@@ -8472,9 +8497,9 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         ResolveAcroForm(dump, DictGet(*catalog_dict, "AcroForm"),
                         acroform_id);
 
-    // The set of loaded-field object ids still present in form_->fields_.
+    // The set of loaded-field object ids still present in `fields`.
     std::set<std::uint32_t> present_loaded;
-    for (const auto* fp : form_->fields_) {
+    for (const auto* fp : fields) {
         auto it = form_->loaded_ids_.find(fp);
         if (it != form_->loaded_ids_.end())
             present_loaded.insert(it->second);
@@ -8485,7 +8510,7 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
     // Newly-added (non-loaded) fields, and value-edited loaded fields.
     std::vector<Aspose::Pdf::Forms::Field*> new_fields;
     std::vector<Aspose::Pdf::Forms::Field*> modified_loaded;
-    for (auto* fp : form_->fields_) {
+    for (auto* fp : fields) {
         if (fp == nullptr) continue;
         auto lit = form_->loaded_ids_.find(fp);
         if (lit == form_->loaded_ids_.end()) {

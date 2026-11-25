@@ -53,12 +53,13 @@ void Form::Delete(const std::string& fieldName) {
 }
 
 void Form::Flatten() {
-    // Structural flatten: drop every interactive field and flag Save to
-    // remove the catalog /AcroForm. v1 does not render field appearances
-    // into the page content stream (no appearance generator yet), so a
-    // flattened field's value is removed rather than burned-in.
+    // The form is empty for the user from here on; the fields move to
+    // flatten_fields_ so Save still writes them (new fields with their /AP,
+    // edited loaded fields with a fresh /AP), then burns every visible
+    // widget into its page content and removes the catalog /AcroForm.
+    flatten_fields_.insert(flatten_fields_.end(), fields_.begin(),
+                           fields_.end());
     fields_.clear();
-    field_pages_.clear();
     flatten_requested_ = true;
 }
 
