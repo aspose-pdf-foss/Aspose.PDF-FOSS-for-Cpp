@@ -1,4 +1,5 @@
 #include <aspose/pdf/annotations/annotation.hpp>
+#include <aspose/pdf/annotations/annotation_collection.hpp>
 
 #include <utility>
 
@@ -21,10 +22,7 @@ Aspose::Pdf::Rectangle Annotation::GetRectangle(
 }
 
 void Annotation::Flatten() {
-    // Flattening burns the annotation's appearance into the page
-    // content stream. v1 stub — surfaces are stored, but
-    // appearance generation lands with the Forms cluster's
-    // appearance-stream generator.
+    if (owner_ != nullptr) owner_->FlattenItem(*this);
 }
 
 void Annotation::Accept(AnnotationSelector& visitor) {

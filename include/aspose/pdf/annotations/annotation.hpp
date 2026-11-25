@@ -31,6 +31,8 @@
 
 namespace Aspose::Pdf::Annotations {
 
+class AnnotationCollection;
+
 class AnnotationSelector;
 
 class Annotation : public Aspose::Pdf::BaseParagraph {
@@ -42,8 +44,11 @@ public:
     Aspose::Pdf::Rectangle GetRectangle(
             bool considerRotation) const noexcept;
 
-    // Flatten this annotation into the page content stream
-    // (the annotation is replaced by static graphics).
+    // Flatten this annotation into the page content stream (the
+    // annotation is replaced by static graphics). It leaves its page's
+    // annotation collection at once; the next Save draws its appearance
+    // into the page and removes it (one without an appearance is just
+    // removed). No-op for an annotation not added to a page.
     void Flatten();
 
     // Visitor double-dispatch hook. Default impl is a no-op so
@@ -141,6 +146,10 @@ private:
         = Aspose::Pdf::HorizontalAlignment::None;
     std::string full_name_;
     int page_index_ = 0;
+    // The collection this annotation was added to (set by
+    // AnnotationCollection::Add); Flatten() hands the annotation to it.
+    friend class AnnotationCollection;
+    AnnotationCollection* owner_ = nullptr;
 };
 
 }  // namespace Aspose::Pdf::Annotations

@@ -14,6 +14,11 @@ void AnnotationCollection::Add(Annotation& annotation,
                                 bool considerRotation) {
     items_.push_back(&annotation);
     consider_rotation_.push_back(considerRotation);
+    annotation.owner_ = this;
+}
+
+void AnnotationCollection::FlattenItem(Annotation& annotation) {
+    if (Remove(annotation)) flatten_items_.push_back(&annotation);
 }
 
 void AnnotationCollection::Add(Annotation& annotation) {

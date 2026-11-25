@@ -1452,7 +1452,8 @@ void Document::Save(const std::string& outputFileName) const {
         // Dirty when the page has annotations to (re)write, OR when loaded
         // annotations were removed (Count can drop to 0 on delete-all —
         // loaded_count_ still reflects that the page had annotations).
-        if (slot && (slot->Count() > 0 || slot->loaded_count_ > 0)) {
+        if (slot && (slot->Count() > 0 || slot->loaded_count_ > 0 ||
+                     !slot->flatten_items_.empty())) {
             annots_dirty = true;
             break;
         }
@@ -2164,6 +2165,8 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         return id;
     };
 
+    // Object ids of annotations Flatten() took out of a collection.
+    std::set<std::uint32_t> flatten_ids;
     for (std::size_t leaf_idx = 0;
          leaf_idx < page_annotations_.size(); ++leaf_idx) {
         const auto& slot = page_annotations_[leaf_idx];
@@ -2178,13 +2181,22 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         // their original /Annots refs — never rewritten (lossless).
         std::set<std::uint32_t> present_loaded;
         std::vector<const Aspose::Pdf::Annotations::Annotation*> new_annots;
-        for (int i = 0; i < slot->Count(); ++i) {
-            const auto* ptr = &(*slot)[i];
+        auto partition = [&](const Aspose::Pdf::Annotations::Annotation* ptr) {
             auto it = slot->loaded_ids_.find(ptr);
             if (it != slot->loaded_ids_.end())
                 present_loaded.insert(it->second);
             else
                 new_annots.push_back(ptr);
+        };
+        for (int i = 0; i < slot->Count(); ++i) partition(&(*slot)[i]);
+        // Flattened annotations stay in /Annots for the flatten pass below.
+        const std::set<const Aspose::Pdf::Annotations::Annotation*> flattened(
+            slot->flatten_items_.begin(), slot->flatten_items_.end());
+        for (const auto* ptr : slot->flatten_items_) {
+            partition(ptr);
+            if (auto it = slot->loaded_ids_.find(ptr);
+                    it != slot->loaded_ids_.end())
+                flatten_ids.insert(it->second);
         }
         const bool removed_loaded =
             present_loaded.size() < slot->loaded_count_;
@@ -2496,6 +2508,7 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
             }
 
             const std::uint32_t annot_id = next_id++;
+            if (flattened.count(ptr)) flatten_ids.insert(annot_id);
             foundation::pdf_writer_incremental::DirtyObject d;
             d.id = annot_id;
             d.generation = 0;
@@ -2525,12 +2538,17 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         dirty.push_back(std::move(d));
     }
 
-    if (dirty.empty()) return working;
-
-    return foundation::pdf_writer_incremental::AppendIncremental(
-        working_span,
-        std::span<const foundation::pdf_writer_incremental::DirtyObject>(
-            dirty.data(), dirty.size()));
+    std::vector<std::byte> result =
+        dirty.empty()
+            ? working
+            : foundation::pdf_writer_incremental::AppendIncremental(
+                  working_span,
+                  std::span<const foundation::pdf_writer_incremental::
+                                DirtyObject>(dirty.data(), dirty.size()));
+    if (flatten_ids.empty()) return result;
+    FlattenRequest req;
+    req.ids = std::move(flatten_ids);
+    return AppendFlattenUpdate(result, req);
 }
 
 // ===== Page geometry =========================================================

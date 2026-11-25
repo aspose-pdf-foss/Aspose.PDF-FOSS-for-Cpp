@@ -107,6 +107,11 @@ private:
 
     std::vector<Annotation*> items_;
     std::vector<bool> consider_rotation_;
+    // Annotations Flatten() took out of items_: Save writes them (new
+    // ones) and burns them into the page.
+    friend class Annotation;
+    std::vector<Annotation*> flatten_items_;
+    void FlattenItem(Annotation& annotation);
 };
 
 }  // namespace Aspose::Pdf::Annotations
