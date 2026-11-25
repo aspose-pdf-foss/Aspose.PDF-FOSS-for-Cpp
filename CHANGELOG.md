@@ -14,6 +14,16 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - `PageCollection::Add(const Page&)` and `PageCollection::Insert(int, const Page&)` accept a page
   from another document: the page and the objects it reaches are deep-imported. Annotations and
   unsaved edits on the source page are not carried over.
+- `Annotation::Flatten()` removes the annotation from its page's collection; on `Save()` its
+  appearance is drawn into the page content and the annotation (with its popup) is removed. An
+  annotation without an appearance is simply removed.
+- `Field::Flatten()` flattens a single form field: its widgets are drawn into their pages and the
+  field is removed from the form, while the other fields stay interactive.
+- `PdfAnnotationEditor::FlatteningAnnotations()` flattens every annotation and form field of the
+  document; the `FlattenSettings` overload honours `HideButtons`; the `(start, end, types)` overload
+  flattens only the given annotation types on the given pages (`Widget` includes form fields).
+  Annotations the library does not model, such as FreeText or Ink, are covered too; one without an
+  appearance is left in place.
 
 ### Changed
 
