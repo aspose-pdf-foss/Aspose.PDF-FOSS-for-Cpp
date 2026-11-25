@@ -193,6 +193,9 @@ private:
     // Snapshot of each loaded field's effective value at load time, so Save
     // can detect a value edit and re-emit only the changed field objects.
     std::map<const Field*, std::string> loaded_values_;
+    // Snapshot of each loaded field's other editable attributes (name,
+    // flags, rectangle, options...), to detect edits beyond the value.
+    std::map<const Field*, std::string> loaded_attrs_;
     std::size_t loaded_count_ = 0;
     // Set by Flatten() — Save writes the fields, burns every visible widget
     // into its page content, then removes the catalog /AcroForm.

@@ -7696,6 +7696,132 @@ std::string FieldEffectiveValue(const Aspose::Pdf::Forms::Field* fp) {
     return fp->Value();
 }
 
+// A loaded field's editable attributes as one comparable string: name,
+// field flags, text-box options, quadding, rectangle, annotation flags and
+// choice options. Snapshotted at load; a difference at Save means the field
+// was edited (beyond its value).
+std::string FieldAttrsKey(const Aspose::Pdf::Forms::Field* fp) {
+    namespace F = Aspose::Pdf::Forms;
+    std::ostringstream k;
+    k << fp->PartialName() << '\x1f' << fp->ReadOnly() << fp->Required()
+      << fp->Exportable() << '\x1f'
+      << static_cast<int>(fp->TextHorizontalAlignment()) << '\x1f'
+      << static_cast<int>(fp->Flags()) << '\x1f';
+    const auto& r = fp->Rect();
+    k << r.LLX() << ' ' << r.LLY() << ' ' << r.URX() << ' ' << r.URY() << '\x1f';
+    if (const auto* tx = dynamic_cast<const F::TextBoxField*>(fp))
+        k << tx->Multiline() << tx->ForceCombs() << ' ' << tx->MaxLen();
+    k << '\x1f';
+    if (auto* ch = dynamic_cast<F::ChoiceField*>(const_cast<F::Field*>(fp))) {
+        auto& opts = ch->Options();
+        for (int i = 0; i < opts.Count(); ++i) k << opts[i].Value() << '\x1e';
+    }
+    return k.str();
+}
+
+void SetDictKey(foundation::objects::Dict& d, const char* key,
+                foundation::objects::Value v) {
+    for (auto& e : d.entries)
+        if (e.first == key) { e.second = std::move(v); return; }
+    d.entries.emplace_back(key, std::move(v));
+}
+
+void EraseDictKey(foundation::objects::Dict& d, const char* key) {
+    for (auto it = d.entries.begin(); it != d.entries.end();) {
+        if (it->first == key) it = d.entries.erase(it);
+        else ++it;
+    }
+}
+
+std::vector<std::string> ReadOptNames(const foundation::objects::Dict& d);
+
+// Write a loaded field's field-level attributes into its object: /T, the
+// managed /Ff bits (read-only, required, no-export; multi-line and comb for
+// text boxes — other bits kept), /MaxLen, /Q, and /Opt when the option list
+// changed.
+void ApplyFieldAttrs(foundation::objects::Dict& d,
+                     Aspose::Pdf::Forms::Field* fp) {
+    namespace F = Aspose::Pdf::Forms;
+    {
+        foundation::objects::String t;
+        t.bytes = EncodePdfString(fp->PartialName());
+        t.kind = foundation::objects::StringKind::Literal;
+        foundation::objects::Value v; v.v = std::move(t);
+        SetDictKey(d, "T", std::move(v));
+    }
+    std::int64_t ff = 0;
+    if (const auto* fv = DictGet(d, "Ff"))
+        if (const auto* i = std::get_if<std::int64_t>(&fv->v)) ff = *i;
+    auto set_bit = [&](int bit, bool on) {
+        if (on) ff |= (1LL << bit); else ff &= ~(1LL << bit);
+    };
+    set_bit(0, fp->ReadOnly());
+    set_bit(1, fp->Required());
+    set_bit(2, !fp->Exportable());
+    auto* tx = dynamic_cast<F::TextBoxField*>(fp);
+    if (tx != nullptr) {
+        set_bit(12, tx->Multiline());
+        set_bit(24, tx->ForceCombs());
+    }
+    if (ff != 0) { foundation::objects::Value v; v.v = ff; SetDictKey(d, "Ff", v); }
+    else EraseDictKey(d, "Ff");
+    if (tx != nullptr) {
+        if (tx->MaxLen() > 0) {
+            foundation::objects::Value v;
+            v.v = static_cast<std::int64_t>(tx->MaxLen());
+            SetDictKey(d, "MaxLen", std::move(v));
+        } else {
+            EraseDictKey(d, "MaxLen");
+        }
+    }
+    const auto ha = fp->TextHorizontalAlignment();
+    if (ha == Aspose::Pdf::HorizontalAlignment::Center ||
+        ha == Aspose::Pdf::HorizontalAlignment::Right) {
+        foundation::objects::Value v;
+        v.v = static_cast<std::int64_t>(
+            ha == Aspose::Pdf::HorizontalAlignment::Center ? 1 : 2);
+        SetDictKey(d, "Q", std::move(v));
+    } else if (ha == Aspose::Pdf::HorizontalAlignment::Left) {
+        EraseDictKey(d, "Q");
+    }
+    if (auto* ch = dynamic_cast<F::ChoiceField*>(fp)) {
+        std::vector<std::string> names;
+        auto& opts = ch->Options();
+        for (int i = 0; i < opts.Count(); ++i) names.push_back(opts[i].Value());
+        if (names != ReadOptNames(d)) {
+            foundation::objects::Array arr;
+            for (const auto& n : names) {
+                foundation::objects::String s;
+                s.bytes = EncodePdfString(n);
+                s.kind = foundation::objects::StringKind::Literal;
+                foundation::objects::Value v; v.v = std::move(s);
+                arr.items.push_back(std::move(v));
+            }
+            foundation::objects::Value v; v.v = std::move(arr);
+            SetDictKey(d, "Opt", std::move(v));
+        }
+    }
+}
+
+// Write a loaded field's widget-level attributes into widget `w`: /F, and
+// /Rect when `with_rect` (and the field's rectangle is not empty).
+void ApplyWidgetAttrs(foundation::objects::Dict& w,
+                      const Aspose::Pdf::Forms::Field* fp, bool with_rect) {
+    const auto f = static_cast<std::int64_t>(fp->Flags());
+    if (f != 0) { foundation::objects::Value v; v.v = f; SetDictKey(w, "F", v); }
+    else EraseDictKey(w, "F");
+    if (!with_rect) return;
+    const auto& r = fp->Rect();
+    if (r.URX() - r.LLX() == 0.0 && r.URY() - r.LLY() == 0.0) return;
+    foundation::objects::Array arr;
+    for (double x : {r.LLX(), r.LLY(), r.URX(), r.URY()}) {
+        foundation::objects::Value v; v.v = x; arr.items.push_back(std::move(v));
+    }
+    foundation::objects::Value v; v.v = std::move(arr);
+    SetDictKey(w, "Rect", std::move(v));
+}
+
+
 // Strip any existing /V + /AS on a field dict and write the current value:
 // checkboxes write an on/off NAME (+ matching /AS; `on_state` names the
 // checked appearance state); everything else a literal string (omitted when
@@ -7740,6 +7866,25 @@ std::string ReadStrOrName(const foundation::objects::Value* v) {
     }
     if (const auto* n = std::get_if<std::string>(&v->v)) return *n;
     return {};
+}
+
+// The display names of a choice field's /Opt (the second of an
+// [export display] pair).
+std::vector<std::string> ReadOptNames(const foundation::objects::Dict& d) {
+    std::vector<std::string> names;
+    const auto* opt = DictGet(d, "Opt");
+    const auto* arr =
+        opt ? std::get_if<foundation::objects::Array>(&opt->v) : nullptr;
+    if (arr == nullptr) return names;
+    for (const auto& oi : arr->items) {
+        if (const auto* pair = std::get_if<foundation::objects::Array>(&oi.v)) {
+            if (pair->items.size() == 2) names.push_back(ReadStrOrName(&pair->items[1]));
+            else if (!pair->items.empty()) names.push_back(ReadStrOrName(&pair->items[0]));
+        } else {
+            names.push_back(ReadStrOrName(&oi));
+        }
+    }
+    return names;
 }
 
 std::int64_t ReadInt(const foundation::objects::Value* v,
@@ -7859,6 +8004,8 @@ void Document::LoadAcroFormFields(Aspose::Pdf::Forms::Form& form) {
         // Type-specific state.
         if (auto* tx = dynamic_cast<F::TextBoxField*>(raw)) {
             tx->Multiline((ff & (1LL << 12)) != 0);
+            tx->ForceCombs((ff & (1LL << 24)) != 0);
+            tx->MaxLen(static_cast<int>(ReadInt(DictGet(*fdict, "MaxLen"), 0)));
             tx->Value(vstr);
         } else if (auto* cb = dynamic_cast<F::CheckboxField*>(raw)) {
             cb->Checked(!vstr.empty() && vstr != "Off");
@@ -7908,7 +8055,18 @@ void Document::LoadAcroFormFields(Aspose::Pdf::Forms::Form& form) {
             widget_ids.push_back(ref->id);
         }
         form.loaded_widget_ids_[raw] = std::move(widget_ids);
+        if (const auto* qv = DictGet(*fdict, "Q")) {
+            const auto q = ReadInt(qv, 0);
+            raw->TextHorizontalAlignment(
+                q == 1 ? Aspose::Pdf::HorizontalAlignment::Center
+                : q == 2 ? Aspose::Pdf::HorizontalAlignment::Right
+                         : Aspose::Pdf::HorizontalAlignment::Left);
+        }
+        if (const auto* fv = DictGet(*fdict, "F"))
+            raw->Flags(static_cast<Aspose::Pdf::Annotations::AnnotationFlags>(
+                ReadInt(fv, 0)));
         form.loaded_values_[raw] = FieldEffectiveValue(raw);
+        form.loaded_attrs_[raw] = FieldAttrsKey(raw);
         form.fields_.push_back(raw);
         raw->owner_form_ = &form;
         form.owned_fields_.push_back(std::move(field));
@@ -9460,8 +9618,11 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             continue;
         }
         auto vit = form_->loaded_values_.find(fp);
+        auto atit = form_->loaded_attrs_.find(fp);
         if (vit == form_->loaded_values_.end() ||
-            vit->second != FieldEffectiveValue(fp)) {
+            vit->second != FieldEffectiveValue(fp) ||
+            (atit != form_->loaded_attrs_.end() &&
+             atit->second != FieldAttrsKey(fp))) {
             modified_loaded.push_back(fp);
         }
     }
@@ -9627,6 +9788,10 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             dynamic_cast<F::RadioButtonField*>(fp) != nullptr;
         const std::string on_state = WidgetOnState(d, dump);
         ApplyFieldValue(d, fp, on_state);
+        ApplyFieldAttrs(d, fp);
+        const bool merged_widget = DictGet(d, "Kids") == nullptr;
+        if (merged_widget) ApplyWidgetAttrs(d, fp, true);
+        bool first_kid = true;
         auto widget_on = [&](const std::string& state) {
             if (check != nullptr) return check->Checked();
             if (is_radio) return !fp->Value().empty() && fp->Value() == state;
@@ -9647,6 +9812,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
                              : nullptr;
                     if (kd == nullptr) continue;
                     foundation::objects::Dict kw = *kd;
+                    ApplyWidgetAttrs(kw, fp, first_kid);
+                    first_kid = false;
                     const std::string kstate = WidgetOnState(kw, dump);
                     refresh_widget_ap(kw, fp, kstate, widget_on(kstate));
                     foundation::pdf_writer_incremental::DirtyObject kdirty;
