@@ -428,9 +428,13 @@ private:
         const std::vector<std::byte>& working) const;
     // The field-writing pass over `fields` (the form's current fields, or
     // the ones captured by Flatten()).
+    // `emitted`, when given, receives the object id written for each newly
+    // emitted field (a radio group: its parent field).
     std::vector<std::byte> AppendAcroFormFieldsUpdate(
         const std::vector<std::byte>& working,
-        const std::vector<Aspose::Pdf::Forms::Field*>& fields) const;
+        const std::vector<Aspose::Pdf::Forms::Field*>& fields,
+        std::map<const Aspose::Pdf::Forms::Field*, std::uint32_t>* emitted =
+            nullptr) const;
     // What a flatten pass burns: every widget, the annotations whose object
     // id (or /Parent id) is listed, and/or page + subtype rules.
     struct FlattenRequest {

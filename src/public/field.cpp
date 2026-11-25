@@ -1,4 +1,5 @@
 #include <aspose/pdf/forms/field.hpp>
+#include <aspose/pdf/forms/form.hpp>
 
 #include <stdexcept>
 #include <string>
@@ -12,7 +13,7 @@ Field::Field(Aspose::Pdf::Document& doc)
 bool Field::Recalculate() { return true; }
 
 void Field::Flatten() {
-    Aspose::Pdf::Annotations::Annotation::Flatten();
+    if (owner_form_ != nullptr) owner_form_->FlattenField(*this);
 }
 
 void Field::SetPosition(Aspose::Pdf::Point point) {

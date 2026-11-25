@@ -10,6 +10,10 @@
 #include <aspose/pdf/annotations/link_annotation.hpp>
 #include <aspose/pdf/annotations/square_annotation.hpp>
 #include <aspose/pdf/document.hpp>
+#include <aspose/pdf/forms/field.hpp>
+#include <aspose/pdf/forms/form.hpp>
+#include <aspose/pdf/forms/radio_button_field.hpp>
+#include <aspose/pdf/forms/text_box_field.hpp>
 
 #include "flatten_test_support.hpp"
 
@@ -26,6 +30,37 @@ void SaveWithSquare(const std::string& path) {
     Annotations::SquareAnnotation sq{page, Rect(200, 200, 260, 260)};
     page.Annotations().Add(sq);
     doc.Save(path);
+}
+
+Forms::Field* FieldByName(Document& doc, const std::string& name) {
+    for (Forms::Field* f : doc.Form().Fields())
+        if (f != nullptr && f->PartialName() == name) return f;
+    return nullptr;
+}
+
+// Two text fields on page 1: "a" at y 400-420, "b" at y 300-320.
+void SaveTwoFields(const std::string& path) {
+    Document doc{HelloWorldPdf()};
+    Forms::TextBoxField a{doc, Rect(100, 400, 300, 420)};
+    a.Value("AAAA");
+    Forms::TextBoxField b{doc, Rect(100, 300, 300, 320)};
+    b.Value("BBBB");
+    doc.Form().Add(a, "a", 1);
+    doc.Form().Add(b, "b", 1);
+    doc.Save(path);
+}
+
+// After flattening field "a" of SaveTwoFields' layout: one widget and one
+// burned appearance on page 1, field "b" still interactive, "a" drawn.
+void ExpectOnlyFieldAFlattened(const std::string& out) {
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 1);
+    EXPECT_EQ(FlattenedCount(p), 1);
+    Document re{out};
+    EXPECT_EQ(re.Form().Count(), 1);
+    EXPECT_NE(FieldByName(re, "b"), nullptr);
+    EXPECT_EQ(FieldByName(re, "a"), nullptr);
+    EXPECT_GT(DarkPixels(Render(re, 1), 100, 400, 300, 420), 20);
 }
 
 }  // namespace
@@ -135,4 +170,63 @@ TEST(AnnotationFlatten, FlattenUnownedAnnotationIsNoop) {
     Annotations::SquareAnnotation sq{page, Rect(200, 200, 260, 260)};
     EXPECT_NO_THROW(sq.Flatten());
     EXPECT_EQ(page.Annotations().Count(), 0);
+}
+
+TEST(FieldFlatten, NewFieldFlattenBurnsOnlyThatField) {
+    const std::string out = TmpPath("field_new");
+    {
+        Document doc{HelloWorldPdf()};
+        Forms::TextBoxField a{doc, Rect(100, 400, 300, 420)};
+        a.Value("AAAA");
+        Forms::TextBoxField b{doc, Rect(100, 300, 300, 320)};
+        b.Value("BBBB");
+        doc.Form().Add(a, "a", 1);
+        doc.Form().Add(b, "b", 1);
+        a.Flatten();
+        EXPECT_EQ(doc.Form().Count(), 1);
+        doc.Save(out);
+    }
+    ExpectOnlyFieldAFlattened(out);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldFlatten, LoadedFieldFlatten) {
+    const std::string src = TmpPath("field_loaded_src");
+    const std::string out = TmpPath("field_loaded_out");
+    SaveTwoFields(src);
+    {
+        Document re{src};
+        Forms::Field* a = FieldByName(re, "a");
+        ASSERT_NE(a, nullptr);
+        a->Flatten();
+        EXPECT_EQ(re.Form().Count(), 1);
+        re.Save(out);
+    }
+    ExpectOnlyFieldAFlattened(out);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldFlatten, RadioFieldFlattenBurnsAllKids) {
+    const std::string out = TmpPath("field_radio");
+    {
+        Document doc{HelloWorldPdf()};
+        Forms::RadioButtonField rb{doc};
+        rb.AddOption("x", Rect(100, 300, 120, 320));
+        rb.AddOption("y", Rect(200, 300, 220, 320));
+        rb.Value("y");
+        Forms::TextBoxField t{doc, Rect(100, 400, 300, 420)};
+        t.Value("Keep");
+        doc.Form().Add(rb, "color", 1);
+        doc.Form().Add(t, "t", 1);
+        rb.Flatten();
+        doc.Save(out);
+    }
+    const Parsed p = ParsePage(ReadFile(out), 0);
+    EXPECT_EQ(FlattenedCount(p), 2);
+    EXPECT_EQ(CountSubtype(p, "Widget"), 1);
+    Document re{out};
+    EXPECT_EQ(re.Form().Count(), 1);
+    EXPECT_NE(FieldByName(re, "t"), nullptr);
+    std::filesystem::remove(out);
 }

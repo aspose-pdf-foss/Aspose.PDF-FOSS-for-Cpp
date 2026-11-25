@@ -189,6 +189,11 @@ private:
     // Fields captured by Flatten(): hidden from the user (fields_ is
     // emptied) but still written by Save before the widgets are burned in.
     std::vector<Field*> flatten_fields_;
+    // Fields flattened one by one (Field::Flatten): written by Save, then
+    // burned into their pages and dropped from /AcroForm /Fields.
+    std::vector<Field*> flatten_single_;
+    friend class Field;
+    void FlattenField(Field& field);
 
     std::vector<Field*> fields_;
     // 1-based page number a newly-added field's widget belongs on, recorded

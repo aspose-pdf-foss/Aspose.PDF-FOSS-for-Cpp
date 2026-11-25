@@ -1504,7 +1504,8 @@ void Document::Save(const std::string& outputFileName) const {
     // flatten was requested.
     const bool acroform_dirty =
         form_ && (form_->Count() > 0 || form_->loaded_count_ > 0 ||
-                  form_->flatten_requested_);
+                  form_->flatten_requested_ ||
+                  !form_->flatten_single_.empty());
     const bool text_edits_dirty = !pending_text_edits_.empty();
     const bool redactions_dirty = !pending_redactions_.empty();
     // Sync the public outline tree (if it was accessed) into the staged-write
@@ -7679,6 +7680,7 @@ void Document::LoadAcroFormFields(Aspose::Pdf::Forms::Form& form) {
         form.loaded_ids_[raw] = ref->id;
         form.loaded_values_[raw] = FieldEffectiveValue(raw);
         form.fields_.push_back(raw);
+        raw->owner_form_ = &form;
         form.owned_fields_.push_back(std::move(field));
     }
     form.loaded_count_ = form.owned_fields_.size();
@@ -8484,10 +8486,32 @@ bool Document::ExtractAttachmentInternal(const std::string& name,
 std::vector<std::byte> Document::AppendAcroFormUpdate(
         const std::vector<std::byte>& working) const {
     if (!form_) return working;
-    if (!form_->flatten_requested_)
+    const auto& single = form_->flatten_single_;
+    if (!form_->flatten_requested_ && single.empty())
         return AppendAcroFormFieldsUpdate(working, form_->fields_);
+    if (!form_->flatten_requested_) {
+        // Field::Flatten: write every field, burn the flattened ones' widgets
+        // and drop those fields from /AcroForm /Fields.
+        std::vector<Aspose::Pdf::Forms::Field*> fields = form_->fields_;
+        fields.insert(fields.end(), single.begin(), single.end());
+        std::map<const Aspose::Pdf::Forms::Field*, std::uint32_t> emitted;
+        std::vector<std::byte> w =
+            AppendAcroFormFieldsUpdate(working, fields, &emitted);
+        FlattenRequest req;
+        for (const auto* f : single) {
+            if (auto it = form_->loaded_ids_.find(f);
+                    it != form_->loaded_ids_.end())
+                req.ids.insert(it->second);
+            else if (auto e = emitted.find(f); e != emitted.end())
+                req.ids.insert(e->second);
+        }
+        std::set<std::uint32_t> removed = req.ids;
+        w = AppendFlattenUpdate(w, req, &removed);
+        return RemoveFieldsFromAcroForm(w, removed);
+    }
     std::vector<Aspose::Pdf::Forms::Field*> fields = form_->flatten_fields_;
     fields.insert(fields.end(), form_->fields_.begin(), form_->fields_.end());
+    fields.insert(fields.end(), single.begin(), single.end());
     FlattenRequest all_widgets;
     all_widgets.all_widgets = true;
     return RemoveCatalogAcroForm(AppendFlattenUpdate(
@@ -8987,7 +9011,9 @@ std::vector<std::byte> Document::AppendFlattenUpdate(
 
 std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         const std::vector<std::byte>& working,
-        const std::vector<Aspose::Pdf::Forms::Field*>& fields) const {
+        const std::vector<Aspose::Pdf::Forms::Field*>& fields,
+        std::map<const Aspose::Pdf::Forms::Field*, std::uint32_t>* emitted)
+        const {
     namespace fa = foundation::field_appearance;
     if (!form_) return working;
     if (fields.empty() && form_->loaded_count_ == 0) return working;
@@ -9297,6 +9323,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
                     sel_value = radio->option_kids_[si].OptionName();
             }
             const std::uint32_t parent_id = next_id++;
+            if (emitted != nullptr) (*emitted)[fp] = parent_id;
             foundation::objects::Array kids;
             for (const auto& kid : radio->option_kids_) {
                 const std::string state = kid.OptionName();
@@ -9528,6 +9555,7 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
         }
 
         const std::uint32_t field_id = next_id++;
+        if (emitted != nullptr) (*emitted)[fp] = field_id;
         foundation::pdf_writer_incremental::DirtyObject obj;
         obj.id = field_id;
         obj.generation = 0;

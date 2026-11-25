@@ -34,6 +34,8 @@ class Document;
 
 namespace Aspose::Pdf::Forms {
 
+class Form;
+
 class Field : public Aspose::Pdf::Annotations::WidgetAnnotation {
 public:
     explicit Field(Aspose::Pdf::Document& doc);
@@ -46,8 +48,10 @@ public:
     // Catalog /AcroForm /CO entries.
     bool Recalculate();
 
-    // Flatten the field into the page content stream (removes
-    // the field annotation; underlying content stays).
+    // Flatten the field into the page content stream. It leaves its
+    // form at once; the next Save draws its widgets into their pages and
+    // removes the field, keeping the rest of the form interactive. No-op
+    // for a field not added to a form.
     void Flatten();
 
     // Move the field's Rect so its lower-left corner is at
@@ -141,6 +145,12 @@ private:
     // these — the storage is in place for the F8 save-through
     // beat to populate.
     std::vector<Aspose::Pdf::Annotations::WidgetAnnotation*> kids_;
+
+    // The form this field was added to (set by Form::Add and on load);
+    // Flatten() hands the field to it.
+    friend class Form;
+    friend class Aspose::Pdf::Document;
+    Form* owner_form_ = nullptr;
 };
 
 }  // namespace Aspose::Pdf::Forms

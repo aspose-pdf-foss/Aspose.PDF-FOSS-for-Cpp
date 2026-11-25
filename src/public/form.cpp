@@ -66,17 +66,27 @@ void Form::Flatten() {
 void Form::Add(Field& field, int pageNumber) {
     field.Parent(&field);   // self-Parent default — re-bound below
     fields_.push_back(&field);
+    field.owner_form_ = this;
     field_pages_[&field] = pageNumber;
 }
 
 void Form::Add(Field& field) {
     fields_.push_back(&field);
+    field.owner_form_ = this;
+}
+
+void Form::FlattenField(Field& field) {
+    auto it = std::find(fields_.begin(), fields_.end(), &field);
+    if (it == fields_.end()) return;
+    fields_.erase(it);
+    flatten_single_.push_back(&field);
 }
 
 Field* Form::Add(Field& field, const std::string& partialName,
                   int pageNumber) {
     field.PartialName(partialName);
     fields_.push_back(&field);
+    field.owner_form_ = this;
     field_pages_[&field] = pageNumber;
     return &field;
 }
