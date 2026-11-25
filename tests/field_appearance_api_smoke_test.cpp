@@ -130,3 +130,124 @@ TEST(FieldAppearanceApi, FlattenBurnsAllAppearances) {
     EXPECT_EQ(CountSubtype(ParsePage(bytes, 1), "Widget"), 0);
     std::filesystem::remove(out);
 }
+
+// ---- Fields loaded from a file ----------------------------------------------
+
+namespace {
+
+// Save two_pages.pdf with text field "name" = `value` on page 1 at y
+// 400-420; with `second`, also shown on page 2 at y 500-520.
+void SaveNameField(const std::string& path, const std::string& value,
+                   bool second) {
+    Document doc{TwoPagesPdf()};
+    Forms::TextBoxField f{doc, Rect(100, 400, 300, 420)};
+    f.Value(value);
+    doc.Form().Add(f, "name", 1);
+    if (second) doc.Form().AddFieldAppearance(f, 2, Rect(100, 500, 300, 520));
+    doc.Save(path);
+}
+
+}  // namespace
+
+TEST(FieldAppearanceApi, LoadedMergedFieldGetsSecondAppearance) {
+    const std::string src = TmpPath("fa_loaded_merged_src");
+    const std::string out = TmpPath("fa_loaded_merged_out");
+    SaveNameField(src, "Shared", false);
+    {
+        Document re{src};
+        Forms::Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        re.Form().AddFieldAppearance(*f, 2, Rect(100, 500, 300, 520));
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 0), "Widget"), 1);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 1), "Widget"), 1);
+    Document re{out};
+    ASSERT_EQ(re.Form().Count(), 1);
+    Forms::Field* f = FieldByName(re, "name");
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(f->Value(), "Shared");
+    EXPECT_GT(DarkPixels(Render(re, 2), 100, 500, 300, 520), 20);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldAppearanceApi, LoadedMergedFieldRemoveOriginal) {
+    const std::string src = TmpPath("fa_loaded_move_src");
+    const std::string out = TmpPath("fa_loaded_move_out");
+    SaveNameField(src, "Moved", false);
+    {
+        Document re{src};
+        Forms::Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        re.Form().AddFieldAppearance(*f, 2, Rect(100, 500, 300, 520));
+        re.Form().RemoveFieldAppearance(*f, 1);
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 0), "Widget"), 0);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 1), "Widget"), 1);
+    Document re{out};
+    ASSERT_EQ(re.Form().Count(), 1);
+    EXPECT_EQ(FieldByName(re, "name")->Value(), "Moved");
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldAppearanceApi, LoadedKidsFieldRemoveAppearance) {
+    const std::string src = TmpPath("fa_loaded_kids_src");
+    const std::string out = TmpPath("fa_loaded_kids_out");
+    SaveNameField(src, "Two", true);
+    {
+        Document re{src};
+        Forms::Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        EXPECT_THROW(re.Form().RemoveFieldAppearance(*f, 3), std::out_of_range);
+        re.Form().RemoveFieldAppearance(*f, 1);
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 0), "Widget"), 0);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 1), "Widget"), 1);
+    Document re{out};
+    EXPECT_EQ(re.Form().Count(), 1);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldAppearanceApi, LoadedFieldValueShowsOnAllAppearances) {
+    const std::string src = TmpPath("fa_loaded_value_src");
+    const std::string out = TmpPath("fa_loaded_value_out");
+    SaveNameField(src, "Old", true);
+    {
+        Document re{src};
+        Forms::Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        f->Value("New");
+        re.Save(out);
+    }
+    EXPECT_GE(Occurrences(ReadFile(out), "(New) Tj"), 2);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
+
+TEST(FieldAppearanceApi, LoadedFieldFlattenAfterAddBurnsAll) {
+    const std::string src = TmpPath("fa_loaded_flat_src");
+    const std::string out = TmpPath("fa_loaded_flat_out");
+    SaveNameField(src, "Flat", false);
+    {
+        Document re{src};
+        Forms::Field* f = FieldByName(re, "name");
+        ASSERT_NE(f, nullptr);
+        re.Form().AddFieldAppearance(*f, 2, Rect(100, 500, 300, 520));
+        f->Flatten();
+        re.Save(out);
+    }
+    const std::string bytes = ReadFile(out);
+    EXPECT_EQ(FlattenedCount(ParsePage(bytes, 0)), 1);
+    EXPECT_EQ(FlattenedCount(ParsePage(bytes, 1)), 1);
+    EXPECT_EQ(CountSubtype(ParsePage(bytes, 1), "Widget"), 0);
+    std::filesystem::remove(src);
+    std::filesystem::remove(out);
+}
