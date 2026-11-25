@@ -83,6 +83,7 @@
 #include "flate.hpp"
 #include "content_stream.hpp"
 #include "digest.hpp"
+#include "field_appearance.hpp"
 #include "outlines.hpp"
 #include "pages_tree.hpp"
 #include "pkcs7_sign.hpp"
@@ -8400,6 +8401,7 @@ bool Document::ExtractAttachmentInternal(const std::string& name,
 
 std::vector<std::byte> Document::AppendAcroFormUpdate(
         const std::vector<std::byte>& working) const {
+    namespace fa = foundation::field_appearance;
     if (!form_) return working;
     const bool flatten = form_->flatten_requested_;
     if (form_->Count() == 0 && form_->loaded_count_ == 0 && !flatten) {
@@ -8608,74 +8610,6 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         dirty.push_back(std::move(d));
         return id;
     };
-    auto escape_ap = [](const std::string& s) {
-        std::string o; o.reserve(s.size());
-        for (char c : s) {
-            if (c == '(' || c == ')' || c == '\\') o += '\\';
-            o += c;
-        }
-        return o;
-    };
-    // A 1pt black field border + white background, drawn in widget-local
-    // space, so every field is visibly outlined in any viewer (not reliant on
-    // the viewer painting /MK chrome).
-    auto field_chrome = [](std::ostringstream& cs, double w, double h) {
-        cs << "1 1 1 rg 0 0 " << w << ' ' << h << " re f\n"     // white fill
-           << "0 G 1 w 0.5 0.5 " << (w - 1.0) << ' ' << (h - 1.0)
-           << " re S\n";                                       // black border
-    };
-    auto text_ap = [&](double w, double h, const std::string& value,
-                       const char* font_key, double size) {
-        std::ostringstream cs;
-        cs << "q\n";
-        field_chrome(cs, w, h);
-        cs << "0 0 " << w << " " << h << " re W n\n";
-        if (!value.empty()) {
-            cs << "BT\n/" << font_key << " " << size << " Tf\n0 g\n"
-               << "2 " << (h * 0.30) << " Td\n(" << escape_ap(value)
-               << ") Tj\nET\n";
-        }
-        cs << "Q\n";
-        return cs.str();
-    };
-    // Multi-line list-box appearance: border + one option per line, the
-    // selected row highlighted.
-    auto list_ap = [&](double w, double h,
-                       const std::vector<std::string>& options, int selected) {
-        std::ostringstream cs;
-        cs << "q\n";
-        field_chrome(cs, w, h);
-        cs << "0 0 " << w << " " << h << " re W n\n";
-        const double fs = 11.0, lh = fs * 1.3;
-        double y = h - lh + 2.0;
-        for (std::size_t i = 0; i < options.size() && y > -lh; ++i) {
-            if (static_cast<int>(i) == selected) {
-                cs << "0.6 0.75 0.9 rg 1 " << (y - 2.0) << ' ' << (w - 2.0)
-                   << ' ' << lh << " re f\n";  // selection highlight
-            }
-            cs << "BT\n/Helv " << fs << " Tf\n0 g\n2 " << y << " Td\n("
-               << escape_ap(options[i]) << ") Tj\nET\n";
-            y -= lh;
-        }
-        cs << "Q\n";
-        return cs.str();
-    };
-    auto check_ap = [&](double w, double h, bool draw) {
-        std::ostringstream cs;
-        cs << "q\n";
-        field_chrome(cs, w, h);  // always show the box outline
-        if (draw) {
-            // Green vector check mark — drawn with strokes rather than the
-            // ZapfDingbats glyph so it renders in any engine.
-            cs << "0 0.5 0 RG " << std::max(1.0, std::min(w, h) * 0.13)
-               << " w 1 J 1 j " << (w * 0.22) << ' ' << (h * 0.50) << " m "
-               << (w * 0.42) << ' ' << (h * 0.27) << " l " << (w * 0.78) << ' '
-               << (h * 0.74) << " l S\n";
-        }
-        cs << "Q\n";
-        return cs.str();
-    };
-
     // Resolve a field's 1-based page → page object id (from the page-aware
     // Add overload). Returns 0 when unbound.
     auto field_page_id = [&](Aspose::Pdf::Forms::Field* f) -> std::uint32_t {
@@ -8686,31 +8620,6 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         if (pn < 1 || static_cast<std::size_t>(pn) > tree_->leaves.size())
             return 0;
         return tree_->leaves[pn - 1].id;
-    };
-    // A radio dot, drawn in widget-local space: an outer ring always (so the
-    // button is visible in any renderer, not just via the widget border), plus
-    // a filled inner dot for the selected (on) state. `op` = "S" stroke or "f".
-    auto circle_path = [](std::ostringstream& cs, double cx, double cy,
-                          double r, const char* op) {
-        const double k = 0.5523;
-        cs << (cx - r) << ' ' << cy << " m\n"
-           << (cx - r) << ' ' << (cy + k * r) << ' ' << (cx - k * r) << ' '
-           << (cy + r) << ' ' << cx << ' ' << (cy + r) << " c\n"
-           << (cx + k * r) << ' ' << (cy + r) << ' ' << (cx + r) << ' '
-           << (cy + k * r) << ' ' << (cx + r) << ' ' << cy << " c\n"
-           << (cx + r) << ' ' << (cy - k * r) << ' ' << (cx + k * r) << ' '
-           << (cy - r) << ' ' << cx << ' ' << (cy - r) << " c\n"
-           << (cx - k * r) << ' ' << (cy - r) << ' ' << (cx - r) << ' '
-           << (cy - k * r) << ' ' << (cx - r) << ' ' << cy << " c\n" << op << '\n';
-    };
-    auto radio_ap = [&](double w, double h, bool on) {
-        std::ostringstream cs;
-        const double cx = w / 2.0, cy = h / 2.0, rad = std::min(w, h) / 2.0;
-        cs << "q\n0 g\n0.8 w\n";
-        circle_path(cs, cx, cy, rad - 1.0, "S");   // outer ring
-        if (on) circle_path(cs, cx, cy, rad * 0.5, "f");  // inner dot
-        cs << "Q\n";
-        return cs.str();
     };
 
     // Emit each newly-added field as a combined field+widget object.
@@ -8753,9 +8662,9 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
                                             .c_str()));
                 if (w > 0.0 && h > 0.0) {  // on/off appearance per option
                     const std::uint32_t on_id = emit_ap(
-                        w, h, radio_ap(w, h, true), "Helv", "Helvetica");
+                        w, h, fa::RadioButton(w, h, true), "Helv", "Helvetica");
                     const std::uint32_t off_id = emit_ap(
-                        w, h, radio_ap(w, h, false), "Helv", "Helvetica");
+                        w, h, fa::RadioButton(w, h, false), "Helv", "Helvetica");
                     foundation::objects::Dict n;
                     n.entries.emplace_back(state, ref_v(on_id));
                     n.entries.emplace_back("Off", ref_v(off_id));
@@ -8907,10 +8816,10 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
                         dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp)
                             ->Checked();
                     const std::uint32_t yes =
-                        emit_ap(w, h, check_ap(w, h, true), "ZaDb",
+                        emit_ap(w, h, fa::CheckBox(w, h, true), "ZaDb",
                                 "ZapfDingbats");
                     const std::uint32_t off =
-                        emit_ap(w, h, check_ap(w, h, false), "ZaDb",
+                        emit_ap(w, h, fa::CheckBox(w, h, false), "ZaDb",
                                 "ZapfDingbats");
                     foundation::objects::Dict n;
                     n.entries.emplace_back("Yes", ref_v(yes));
@@ -8926,28 +8835,16 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
                     for (int oi = 0; oi < opts.Count(); ++oi)
                         names.push_back(opts[oi].Value());
                     const std::uint32_t apn = emit_ap(
-                        w, h, list_ap(w, h, names, lb->Selected()), "Helv",
+                        w, h, fa::ListBox(w, h, names, lb->Selected()), "Helv",
                         "Helvetica");
                     ap.entries.emplace_back("N", ref_v(apn));
                 } else if (auto* btn =
                                dynamic_cast<Aspose::Pdf::Forms::ButtonField*>(
                                    fp)) {
                     // Push button: filled box + centred white caption.
-                    const std::string cap = btn->NormalCaption().empty()
-                                                ? std::string("Button")
-                                                : btn->NormalCaption();
-                    std::ostringstream bc;
-                    bc << "q 0.18 0.20 0.45 rg 0 0 " << w << ' ' << h
-                       << " re f 1 1 1 rg BT /Helv 13 Tf "
-                       << (w / 2.0 - cap.size() * 3.6) << ' ' << (h / 2.0 - 5.0)
-                       << " Td (";
-                    for (char c : cap) {
-                        if (c == '(' || c == ')' || c == '\\') bc << '\\';
-                        bc << c;
-                    }
-                    bc << ") Tj ET Q\n";
-                    const std::uint32_t apn =
-                        emit_ap(w, h, bc.str(), "Helv", "Helvetica");
+                    const std::uint32_t apn = emit_ap(
+                        w, h, fa::PushButton(w, h, btn->NormalCaption()),
+                        "Helv", "Helvetica");
                     ap.entries.emplace_back("N", ref_v(apn));
                 } else {
                     std::string val = fp->Value();
@@ -8955,7 +8852,7 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
                             dynamic_cast<Aspose::Pdf::Forms::ChoiceField*>(fp))
                         val = ch->Value();
                     const std::uint32_t apn =
-                        emit_ap(w, h, text_ap(w, h, val, "Helv", 12.0), "Helv",
+                        emit_ap(w, h, fa::TextBox(w, h, val), "Helv",
                                 "Helvetica");
                     ap.entries.emplace_back("N", ref_v(apn));
                 }
