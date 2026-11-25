@@ -1,7 +1,9 @@
 #include <aspose/pdf/forms/form.hpp>
+#include <aspose/pdf/forms/radio_button_field.hpp>
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace Aspose::Pdf::Forms {
@@ -91,15 +93,88 @@ Field* Form::Add(Field& field, const std::string& partialName,
     return &field;
 }
 
-void Form::AddFieldAppearance(Field& /*field*/, int /*pageNumber*/,
-                                Aspose::Pdf::Rectangle /*rect*/) {
-    // v1 no-op — per-rendition appearance + page binding lands
-    // with the F8 AcroForm save-through beat.
+std::vector<std::uint32_t>
+Form::RemainingLoadedWidgets(const Field& field) const {
+    std::vector<std::uint32_t> ids;
+    if (auto it = loaded_widget_ids_.find(&field);
+            it != loaded_widget_ids_.end()) {
+        ids = it->second;
+    } else if (auto lit = loaded_ids_.find(&field); lit != loaded_ids_.end()) {
+        ids.push_back(lit->second);  // field and widget in one object
+    }
+    if (auto rit = removed_widget_ids_.find(&field);
+            rit != removed_widget_ids_.end()) {
+        ids.erase(std::remove_if(ids.begin(), ids.end(),
+                                 [&](std::uint32_t id) {
+                                     return rit->second.count(id) != 0;
+                                 }),
+                  ids.end());
+    }
+    return ids;
 }
 
-void Form::RemoveFieldAppearance(Field& /*field*/,
-                                   int /*appearanceIndex*/) {
-    // v1 no-op (see above).
+void Form::AddFieldAppearance(Field& field, int pageNumber,
+                              Aspose::Pdf::Rectangle rect) {
+    if (std::find(fields_.begin(), fields_.end(), &field) == fields_.end())
+        throw std::invalid_argument(
+            "Aspose::Pdf::Forms::Form::AddFieldAppearance: the field is not "
+            "in this form");
+    if (dynamic_cast<RadioButtonField*>(&field) != nullptr)
+        throw std::invalid_argument(
+            "Aspose::Pdf::Forms::Form::AddFieldAppearance: a radio button "
+            "field's places are its options; use AddOption");
+    if (loaded_ids_.count(&field)) {
+        added_renditions_[&field].push_back(Rendition{pageNumber, rect});
+        return;
+    }
+    auto& list = renditions_[&field];
+    if (list.empty()) {
+        auto pit = field_pages_.find(&field);
+        list.push_back(Rendition{pit == field_pages_.end() ? 0 : pit->second,
+                                 field.Rect()});
+    }
+    list.push_back(Rendition{pageNumber, rect});
+}
+
+void Form::RemoveFieldAppearance(Field& field, int appearanceIndex) {
+    if (std::find(fields_.begin(), fields_.end(), &field) == fields_.end())
+        throw std::invalid_argument(
+            "Aspose::Pdf::Forms::Form::RemoveFieldAppearance: the field is "
+            "not in this form");
+    const bool loaded = loaded_ids_.count(&field) != 0;
+    const std::vector<std::uint32_t> remaining =
+        loaded ? RemainingLoadedWidgets(field) : std::vector<std::uint32_t>{};
+    std::size_t count = 0;
+    if (loaded) {
+        auto ait = added_renditions_.find(&field);
+        count = remaining.size() +
+                (ait == added_renditions_.end() ? 0 : ait->second.size());
+    } else {
+        auto rit = renditions_.find(&field);
+        count = rit == renditions_.end() ? 1 : rit->second.size();
+    }
+    if (appearanceIndex < 1 || static_cast<std::size_t>(appearanceIndex) > count)
+        throw std::out_of_range(
+            "Aspose::Pdf::Forms::Form::RemoveFieldAppearance: appearance "
+            "index " + std::to_string(appearanceIndex) + " out of range [1.." +
+            std::to_string(count) + "]");
+    if (count == 1)
+        throw std::invalid_argument(
+            "Aspose::Pdf::Forms::Form::RemoveFieldAppearance: cannot remove "
+            "the field's only appearance");
+    const auto idx = static_cast<std::size_t>(appearanceIndex - 1);
+    if (loaded) {
+        if (idx < remaining.size())
+            removed_widget_ids_[&field].insert(remaining[idx]);
+        else {
+            auto& added = added_renditions_[&field];
+            added.erase(added.begin() +
+                        static_cast<std::ptrdiff_t>(idx - remaining.size()));
+        }
+        return;
+    }
+    auto& list = renditions_[&field];
+    list.erase(list.begin() + static_cast<std::ptrdiff_t>(idx));
 }
 
 void Form::MakeFormAnnotationsIndependent(

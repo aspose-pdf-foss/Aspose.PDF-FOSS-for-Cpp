@@ -23,7 +23,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -101,8 +103,16 @@ public:
     Field* Add(Field& field, const std::string& partialName,
                int pageNumber);
 
+    // Show `field` at one more place: a widget at `rect` on 1-based page
+    // `pageNumber`, sharing the field's value. Throws std::invalid_argument
+    // for a field not in this form or a RadioButtonField (whose places
+    // are its options — use AddOption).
     void AddFieldAppearance(Field& field, int pageNumber,
                              Aspose::Pdf::Rectangle rect);
+    // Remove the field's `appearanceIndex`-th place (1-based; 1 = the
+    // original). Throws std::out_of_range for a bad index and
+    // std::invalid_argument for a field not in this form or when only one
+    // place is left.
     void RemoveFieldAppearance(Field& field, int appearanceIndex);
 
     void MakeFormAnnotationsIndependent(Aspose::Pdf::Page& page);
@@ -207,6 +217,20 @@ private:
     // viewers render the field. Fields added through the page-less Add(field)
     // overload are absent here and keep the v1 unbound behaviour.
     std::map<const Field*, int> field_pages_;
+    // Places (widgets) of a field shown more than once
+    // (AddFieldAppearance). New fields: the full list, the original first.
+    struct Rendition {
+        int page = 0;  // 1-based; 0 = unbound
+        Aspose::Pdf::Rectangle rect;
+    };
+    std::map<const Field*, std::vector<Rendition>> renditions_;
+    // Loaded fields: their widget object ids as loaded, the ones removed,
+    // and the places added.
+    std::map<const Field*, std::vector<std::uint32_t>> loaded_widget_ids_;
+    std::map<const Field*, std::set<std::uint32_t>> removed_widget_ids_;
+    std::map<const Field*, std::vector<Rendition>> added_renditions_;
+    // Loaded widgets of `field` still present, in order.
+    std::vector<std::uint32_t> RemainingLoadedWidgets(const Field& field) const;
     std::vector<Field*> calculated_fields_;
     Aspose::Pdf::Annotations::DefaultAppearance default_appearance_{};
     Forms::XFA xfa_;

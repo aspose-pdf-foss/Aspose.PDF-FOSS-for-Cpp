@@ -9608,121 +9608,153 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
             v.v = ff;
             d.entries.emplace_back("Ff", std::move(v));
         }
-        {
-            const auto& r = field.Rect();
-            foundation::objects::Array arr;
-            for (double d_val : {r.LLX(), r.LLY(), r.URX(), r.URY()}) {
-                foundation::objects::Value v;
-                v.v = d_val;
-                arr.items.push_back(std::move(v));
-            }
-            foundation::objects::Value v;
-            v.v = std::move(arr);
-            d.entries.emplace_back("Rect", std::move(v));
-        }
-
-        // /P parent-page ref + page-/Annots linkage, when the field was added
-        // with an explicit page via Add(field, pageNumber).
-        std::uint32_t widget_page_id = 0;
-        if (tree_) {
-            if (auto pit = form_->field_pages_.find(fp);
-                    pit != form_->field_pages_.end()) {
-                const int page_num = pit->second;
-                if (page_num >= 1 && static_cast<std::size_t>(page_num) <=
-                                         tree_->leaves.size()) {
-                    widget_page_id = tree_->leaves[page_num - 1].id;
-                    foundation::objects::Value pv;
-                    pv.v = foundation::objects::Ref{widget_page_id, 0};
-                    d.entries.emplace_back("P", std::move(pv));
+        // Widget keys for one rendition of `fp` at `r` on page `page_id`
+        // (0 = unbound): /Rect, /P, /DA, Print flag, border + background,
+        // and a pre-rendered /AP so viewers (e.g. Acrobat) draw it.
+        auto append_widget = [&](foundation::objects::Dict& wd,
+                                 const Aspose::Pdf::Rectangle& r,
+                                 std::uint32_t page_id) {
+            {
+                foundation::objects::Array arr;
+                for (double d_val : {r.LLX(), r.LLY(), r.URX(), r.URY()}) {
+                    foundation::objects::Value v;
+                    v.v = d_val;
+                    arr.items.push_back(std::move(v));
                 }
+                foundation::objects::Value v;
+                v.v = std::move(arr);
+                wd.entries.emplace_back("Rect", std::move(v));
             }
-        }
-
-        // Visual appearance: /DA, Print flag, border + background, and a
-        // pre-rendered /AP so viewers (e.g. Acrobat) draw the field.
-        {
+            if (page_id != 0) wd.entries.emplace_back("P", ref_v(page_id));
             const bool is_checkbox =
                 dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp) != nullptr;
-            const auto& rr = field.Rect();
-            const double w = rr.URX() - rr.LLX();
-            const double h = rr.URY() - rr.LLY();
+            const double w = r.URX() - r.LLX();
+            const double h = r.URY() - r.LLY();
+            wd.entries.emplace_back(
+                "DA", str_v(is_checkbox ? "/ZaDb 0 Tf 0 g" : "/Helv 12 Tf 0 g"));
+            wd.entries.emplace_back("F", int_v(4));  // Print
+            if (w <= 0.0 || h <= 0.0) return;
+            foundation::objects::Dict ap;
+            if (is_checkbox) {
+                const std::uint32_t yes =
+                    emit_ap(w, h, fa::CheckBox(w, h, true), "ZaDb",
+                            "ZapfDingbats");
+                const std::uint32_t off =
+                    emit_ap(w, h, fa::CheckBox(w, h, false), "ZaDb",
+                            "ZapfDingbats");
+                foundation::objects::Dict n;
+                n.entries.emplace_back("Yes", ref_v(yes));
+                n.entries.emplace_back("Off", ref_v(off));
+                ap.entries.emplace_back("N", dict_v(std::move(n)));
+            } else if (auto* lb =
+                           dynamic_cast<Aspose::Pdf::Forms::ListBoxField*>(fp)) {
+                // List box: render the options, highlighting the selection.
+                auto& opts = lb->Options();
+                std::vector<std::string> names;
+                for (int oi = 0; oi < opts.Count(); ++oi)
+                    names.push_back(opts[oi].Value());
+                ap.entries.emplace_back(
+                    "N", ref_v(emit_ap(w, h,
+                                       fa::ListBox(w, h, names, lb->Selected()),
+                                       "Helv", "Helvetica")));
+            } else if (auto* btn =
+                           dynamic_cast<Aspose::Pdf::Forms::ButtonField*>(fp)) {
+                // Push button: filled box + centred white caption.
+                ap.entries.emplace_back(
+                    "N", ref_v(emit_ap(w, h,
+                                       fa::PushButton(w, h, btn->NormalCaption()),
+                                       "Helv", "Helvetica")));
+            } else {
+                std::string val = fp->Value();
+                if (auto* ch = dynamic_cast<Aspose::Pdf::Forms::ChoiceField*>(fp))
+                    val = ch->Value();
+                ap.entries.emplace_back(
+                    "N", ref_v(emit_ap(w, h, fa::TextBox(w, h, val), "Helv",
+                                       "Helvetica")));
+            }
+            wd.entries.emplace_back("AP", dict_v(std::move(ap)));
+            foundation::objects::Dict bs;
+            bs.entries.emplace_back("W", real_v(1.0));
+            bs.entries.emplace_back("S", PageNameValue("S"));
+            wd.entries.emplace_back("BS", dict_v(std::move(bs)));
+            foundation::objects::Dict mk;
+            foundation::objects::Array bg;
+            for (int i = 0; i < 3; ++i) bg.items.push_back(real_v(1.0));
+            { foundation::objects::Value v; v.v = std::move(bg);
+              mk.entries.emplace_back("BG", std::move(v)); }
+            wd.entries.emplace_back("MK", dict_v(std::move(mk)));
+        };
+        // 1-based page number -> page object id (0 when out of range).
+        auto page_id_of = [&](int page_num) -> std::uint32_t {
+            if (!tree_ || page_num < 1 ||
+                static_cast<std::size_t>(page_num) > tree_->leaves.size())
+                return 0;
+            return tree_->leaves[page_num - 1].id;
+        };
+
+        std::uint32_t field_obj_id = 0;
+        auto rit = form_->renditions_.find(fp);
+        if (rit == form_->renditions_.end()) {
+            // One rendition: the field and its widget are one object.
+            std::uint32_t widget_page_id = 0;
+            if (auto pit = form_->field_pages_.find(fp);
+                    pit != form_->field_pages_.end())
+                widget_page_id = page_id_of(pit->second);
+            append_widget(d, field.Rect(), widget_page_id);
+            field_obj_id = next_id++;
+            foundation::pdf_writer_incremental::DirtyObject obj;
+            obj.id = field_obj_id;
+            obj.generation = 0;
+            obj.value.v = std::move(d);
+            dirty.push_back(std::move(obj));
+            if (widget_page_id != 0)
+                page_widget_refs[widget_page_id].push_back(field_obj_id);
+        } else {
+            // Several renditions (Form::AddFieldAppearance): a parent field
+            // holding the value, plus one /Kids widget per rendition.
+            for (auto it = d.entries.begin(); it != d.entries.end();) {
+                if (it->first == "Type" || it->first == "Subtype" ||
+                    it->first == "AS")
+                    it = d.entries.erase(it);
+                else
+                    ++it;
+            }
+            const bool is_checkbox =
+                dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp) != nullptr;
             d.entries.emplace_back(
                 "DA", str_v(is_checkbox ? "/ZaDb 0 Tf 0 g" : "/Helv 12 Tf 0 g"));
-            d.entries.emplace_back("F", int_v(4));  // Print
-            if (w > 0.0 && h > 0.0) {
-                foundation::objects::Dict ap;
+            field_obj_id = next_id++;
+            foundation::objects::Array kids;
+            for (const auto& rend : rit->second) {
+                foundation::objects::Dict kd;
+                kd.entries.emplace_back("Type", PageNameValue("Annot"));
+                kd.entries.emplace_back("Subtype", PageNameValue("Widget"));
+                kd.entries.emplace_back("Parent", ref_v(field_obj_id));
+                const std::uint32_t kpage = page_id_of(rend.page);
+                append_widget(kd, rend.rect, kpage);
                 if (is_checkbox) {
                     const bool on =
                         dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp)
                             ->Checked();
-                    const std::uint32_t yes =
-                        emit_ap(w, h, fa::CheckBox(w, h, true), "ZaDb",
-                                "ZapfDingbats");
-                    const std::uint32_t off =
-                        emit_ap(w, h, fa::CheckBox(w, h, false), "ZaDb",
-                                "ZapfDingbats");
-                    foundation::objects::Dict n;
-                    n.entries.emplace_back("Yes", ref_v(yes));
-                    n.entries.emplace_back("Off", ref_v(off));
-                    ap.entries.emplace_back("N", dict_v(std::move(n)));
-                    (void)on;
-                } else if (auto* lb =
-                               dynamic_cast<Aspose::Pdf::Forms::ListBoxField*>(
-                                   fp)) {
-                    // List box: render the options, highlighting the selection.
-                    auto& opts = lb->Options();
-                    std::vector<std::string> names;
-                    for (int oi = 0; oi < opts.Count(); ++oi)
-                        names.push_back(opts[oi].Value());
-                    const std::uint32_t apn = emit_ap(
-                        w, h, fa::ListBox(w, h, names, lb->Selected()), "Helv",
-                        "Helvetica");
-                    ap.entries.emplace_back("N", ref_v(apn));
-                } else if (auto* btn =
-                               dynamic_cast<Aspose::Pdf::Forms::ButtonField*>(
-                                   fp)) {
-                    // Push button: filled box + centred white caption.
-                    const std::uint32_t apn = emit_ap(
-                        w, h, fa::PushButton(w, h, btn->NormalCaption()),
-                        "Helv", "Helvetica");
-                    ap.entries.emplace_back("N", ref_v(apn));
-                } else {
-                    std::string val = fp->Value();
-                    if (auto* ch =
-                            dynamic_cast<Aspose::Pdf::Forms::ChoiceField*>(fp))
-                        val = ch->Value();
-                    const std::uint32_t apn =
-                        emit_ap(w, h, fa::TextBox(w, h, val), "Helv",
-                                "Helvetica");
-                    ap.entries.emplace_back("N", ref_v(apn));
+                    kd.entries.emplace_back("AS",
+                                            PageNameValue(on ? "Yes" : "Off"));
                 }
-                d.entries.emplace_back("AP", dict_v(std::move(ap)));
-                foundation::objects::Dict bs;
-                bs.entries.emplace_back("W", real_v(1.0));
-                bs.entries.emplace_back("S", PageNameValue("S"));
-                d.entries.emplace_back("BS", dict_v(std::move(bs)));
-                foundation::objects::Dict mk;
-                foundation::objects::Array bg;
-                for (int i = 0; i < 3; ++i) bg.items.push_back(real_v(1.0));
-                { foundation::objects::Value v; v.v = std::move(bg);
-                  mk.entries.emplace_back("BG", std::move(v)); }
-                d.entries.emplace_back("MK", dict_v(std::move(mk)));
+                const std::uint32_t kid_id = next_id++;
+                foundation::pdf_writer_incremental::DirtyObject ko;
+                ko.id = kid_id; ko.generation = 0; ko.value.v = std::move(kd);
+                dirty.push_back(std::move(ko));
+                if (kpage != 0) page_widget_refs[kpage].push_back(kid_id);
+                kids.items.push_back(ref_v(kid_id));
             }
+            { foundation::objects::Value v; v.v = std::move(kids);
+              d.entries.emplace_back("Kids", std::move(v)); }
+            foundation::pdf_writer_incremental::DirtyObject po;
+            po.id = field_obj_id; po.generation = 0; po.value.v = std::move(d);
+            dirty.push_back(std::move(po));
         }
+        if (emitted != nullptr) (*emitted)[fp] = field_obj_id;
 
-        const std::uint32_t field_id = next_id++;
-        if (emitted != nullptr) (*emitted)[fp] = field_id;
-        foundation::pdf_writer_incremental::DirtyObject obj;
-        obj.id = field_id;
-        obj.generation = 0;
-        obj.value.v = std::move(d);
-        dirty.push_back(std::move(obj));
-        if (widget_page_id != 0)
-            page_widget_refs[widget_page_id].push_back(field_id);
-
-        foundation::objects::Value rv;
-        rv.v = foundation::objects::Ref{field_id, 0};
-        fields_arr.items.push_back(std::move(rv));
+        fields_arr.items.push_back(ref_v(field_obj_id));
     }
 
     // Build the updated /AcroForm dict — merge over the existing one,
