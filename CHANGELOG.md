@@ -43,8 +43,18 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
-- FreeText annotations now carry the required `/DA` entry, and their appearance uses the font size
-  from `DefaultAppearance` instead of a fixed 11 pt.
+- Text field appearances now follow the field's settings instead of a fixed one-line Helvetica
+  12 pt:
+  - New fields use their `DefaultAppearance` font and size (size 0 = auto-fit) and
+    `TextHorizontalAlignment`; text boxes honour `Multiline` (word wrapping), `ForceCombs` with
+    `MaxLen` (one character per cell). `/DA`, `/Q`, `/MaxLen` and the comb flag are written, and
+    the font is added to `/AcroForm /DR`.
+  - Fields loaded from a file keep their own `/DA` font, size and colour when their value is
+    changed or when they are flattened without an appearance: the `/DR` font is referenced as is,
+    and `/Q`, multi-line, comb and `/MaxLen` apply.
+  - Password fields show asterisks instead of their value.
+- FreeText annotations now carry the required `/DA` entry, their appearance uses the font size
+  from `DefaultAppearance` instead of a fixed 11 pt, and long text wraps within the box.
 - `PdfFileInfo::GetPageWidth`, `GetPageHeight`, `GetPageRotation`, `GetPageXOffset`, and
   `GetPageYOffset`, and `PdfPageEditor::GetPageSize` and `GetPageRotation` now return the page's
   real media box and rotation instead of fixed US-Letter values. An out-of-range page number throws
