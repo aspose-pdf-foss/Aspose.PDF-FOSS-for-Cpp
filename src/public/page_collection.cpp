@@ -31,12 +31,20 @@ Page PageCollection::Add() {
     return Page(*doc_, idx);
 }
 
-Page PageCollection::Add(const Page& page) {
-    if (page.doc_ != doc_) {
+Page PageCollection::ImportFrom(const Page& page, int pageNumber) {
+    const std::size_t before = Count();
+    const std::size_t idx = doc_->ImportPagesFrom(
+        *page.doc_, {static_cast<int>(page.leaf_index_) + 1}, pageNumber);
+    if (Count() != before + 1) {
         throw std::runtime_error(
-            "Aspose::Pdf::PageCollection::Add: cross-document page copy "
-            "is not supported in v1");
+            "Aspose::Pdf::PageCollection: cross-document page import "
+            "failed");
     }
+    return Page(*doc_, idx);
+}
+
+Page PageCollection::Add(const Page& page) {
+    if (page.doc_ != doc_) return ImportFrom(page, 0);
     const std::size_t idx =
         doc_->AddPageInternal(0, true, page.leaf_index_, 0.0, 0.0);
     return Page(*doc_, idx);
@@ -49,11 +57,7 @@ Page PageCollection::Insert(int pageNumber) {
 }
 
 Page PageCollection::Insert(int pageNumber, const Page& page) {
-    if (page.doc_ != doc_) {
-        throw std::runtime_error(
-            "Aspose::Pdf::PageCollection::Insert: cross-document page "
-            "copy is not supported in v1");
-    }
+    if (page.doc_ != doc_) return ImportFrom(page, pageNumber);
     const std::size_t idx =
         doc_->AddPageInternal(pageNumber, true, page.leaf_index_, 0.0, 0.0);
     return Page(*doc_, idx);

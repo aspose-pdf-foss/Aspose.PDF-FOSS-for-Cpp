@@ -1,6 +1,7 @@
 #include <aspose/pdf/facades/facade.hpp>
 
 #include <memory>
+#include <utility>
 
 #include <aspose/pdf/document.hpp>
 
@@ -9,6 +10,12 @@ namespace Aspose::Pdf::Facades {
 void Facade::BindPdf(const std::string& srcFile) {
     Close();
     owned_ = std::make_unique<Aspose::Pdf::Document>(srcFile);
+    document_ = owned_.get();
+}
+
+void Facade::BindOwned(std::unique_ptr<Aspose::Pdf::Document> doc) {
+    Close();
+    owned_ = std::move(doc);
     document_ = owned_.get();
 }
 

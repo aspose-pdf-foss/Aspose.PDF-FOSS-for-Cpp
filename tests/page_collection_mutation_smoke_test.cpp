@@ -106,3 +106,48 @@ TEST(PageCollectionMutationSmoke, DeleteMultipleAndAll) {
     doc.Pages().Delete();  // all
     EXPECT_EQ(doc.Pages().Count(), 0u);
 }
+
+TEST(PageCollectionMutationSmoke, AddPageFromOtherDocumentAppendsCopy) {
+    const std::string out = TempPath("xadd.pdf");
+    {
+        Document src{TwoPagesPdf()};
+        Document dst{HelloWorldPdf()};
+        ASSERT_EQ(dst.Pages().Count(), 1u);
+        Page added = dst.Pages().Add(src.Pages()[2]);
+        EXPECT_EQ(dst.Pages().Count(), 2u);
+        EXPECT_EQ(added.Number(), 2);
+        EXPECT_NE(PageText(added).find("Page two"), std::string::npos);
+        dst.Save(out);
+    }
+    Document re{out};
+    ASSERT_EQ(re.Pages().Count(), 2u);
+    auto p2 = re.Pages()[2];
+    EXPECT_NE(PageText(p2).find("Page two"), std::string::npos);
+    std::filesystem::remove(out);
+}
+
+TEST(PageCollectionMutationSmoke, InsertPageFromOtherDocumentAtFront) {
+    Document src{TwoPagesPdf()};
+    Document dst{TwoPagesPdf()};
+    Page inserted = dst.Pages().Insert(1, src.Pages()[2]);
+    EXPECT_EQ(dst.Pages().Count(), 3u);
+    EXPECT_EQ(inserted.Number(), 1);
+    auto p1 = dst.Pages()[1];
+    auto p2 = dst.Pages()[2];
+    EXPECT_NE(PageText(p1).find("Page two"), std::string::npos);
+    EXPECT_NE(PageText(p2).find("Page one"), std::string::npos);
+}
+
+TEST(PageCollectionMutationSmoke, CrossDocumentInsertKeepsStagedGeometry) {
+    // Unsaved edits on existing pages must survive a cross-document
+    // import and follow their page when it shifts.
+    Document src{HelloWorldPdf()};
+    Document dst{TwoPagesPdf()};
+    dst.Pages()[1].MediaBox(Rectangle(0, 0, 595, 842, true));
+    dst.Pages()[2].Rotate(Rotation::on90);
+    dst.Pages().Insert(1, src.Pages()[1]);
+    ASSERT_EQ(dst.Pages().Count(), 3u);
+    EXPECT_DOUBLE_EQ(dst.Pages()[2].Rect().Width(), 595.0);
+    EXPECT_EQ(dst.Pages()[3].Rotate(), Rotation::on90);
+    EXPECT_EQ(dst.Pages()[1].Rotate(), Rotation::None);
+}

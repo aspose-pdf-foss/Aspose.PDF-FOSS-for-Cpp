@@ -1,9 +1,11 @@
 #include <aspose/pdf/facades/pdf_file_info.hpp>
 
+#include <memory>
 #include <utility>
 
 #include <aspose/pdf/document.hpp>
 #include <aspose/pdf/document_info.hpp>
+#include <aspose/pdf/page.hpp>
 #include <aspose/pdf/page_collection.hpp>
 
 namespace Aspose::Pdf::Facades {
@@ -14,13 +16,9 @@ PdfFileInfo::PdfFileInfo(const std::string& inputFile)
 }
 
 PdfFileInfo::PdfFileInfo(const std::string& inputFile,
-                          const std::string& /*password*/)
+                          const std::string& password)
     : input_file_(inputFile) {
-    // v1 stub: password-bound open lands when Document gains
-    // password-validating ctor signature support on the file-path
-    // overload (currently only string/path + bytes-based crypto
-    // open via foundation::encrypt_writer).
-    BindPdf(inputFile);
+    BindOwned(std::make_unique<Aspose::Pdf::Document>(inputFile, password));
 }
 
 PdfFileInfo::PdfFileInfo(Aspose::Pdf::Document& document) {
@@ -65,12 +63,48 @@ void PdfFileInfo::SetMetaInfo(const std::string& name,
     extra_meta_[name] = value;
 }
 
-// v1 page-geometry stubs (canonical defaults: US Letter, no rotation).
-float PdfFileInfo::GetPageHeight(int /*pageNum*/) const { return 792.0f; }
-float PdfFileInfo::GetPageRotation(int /*pageNum*/) const { return 0.0f; }
-float PdfFileInfo::GetPageWidth(int /*pageNum*/) const { return 612.0f; }
-float PdfFileInfo::GetPageXOffset(int /*pageNum*/) const { return 0.0f; }
-float PdfFileInfo::GetPageYOffset(int /*pageNum*/) const { return 0.0f; }
+// ---- page geometry ----
+// Read from the page's media box (Page::Rect) and /Rotate. Unbound → 0;
+// a page number outside [1..count] throws std::out_of_range.
+
+namespace {
+
+Aspose::Pdf::Page PageAt(const Aspose::Pdf::Document* doc, int pageNum) {
+    return const_cast<Aspose::Pdf::Document*>(doc)->Pages()[pageNum];
+}
+
+}  // namespace
+
+float PdfFileInfo::GetPageHeight(int pageNum) const {
+    const auto* doc = Document();
+    if (doc == nullptr) return 0.0f;
+    return static_cast<float>(PageAt(doc, pageNum).Rect().Height());
+}
+
+float PdfFileInfo::GetPageRotation(int pageNum) const {
+    const auto* doc = Document();
+    if (doc == nullptr) return 0.0f;
+    return static_cast<float>(
+        static_cast<int>(PageAt(doc, pageNum).Rotate()) * 90);
+}
+
+float PdfFileInfo::GetPageWidth(int pageNum) const {
+    const auto* doc = Document();
+    if (doc == nullptr) return 0.0f;
+    return static_cast<float>(PageAt(doc, pageNum).Rect().Width());
+}
+
+float PdfFileInfo::GetPageXOffset(int pageNum) const {
+    const auto* doc = Document();
+    if (doc == nullptr) return 0.0f;
+    return static_cast<float>(PageAt(doc, pageNum).Rect().LLX());
+}
+
+float PdfFileInfo::GetPageYOffset(int pageNum) const {
+    const auto* doc = Document();
+    if (doc == nullptr) return 0.0f;
+    return static_cast<float>(PageAt(doc, pageNum).Rect().LLY());
+}
 
 std::string PdfFileInfo::GetPdfVersion() const {
     // v1 returns canonical default. Real %PDF-x.y header parse

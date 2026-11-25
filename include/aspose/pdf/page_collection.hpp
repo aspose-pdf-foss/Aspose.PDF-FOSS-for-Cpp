@@ -41,13 +41,16 @@ public:
     // Append a new blank page (US-Letter, 612 x 792). Returns the new
     // page.
     Page Add();
-    // Append a copy of `page` (shallow — shares the source page's
-    // content/resources object refs). Same-document only in v1.
+    // Append a copy of `page`. From the same document the copy is shallow
+    // (shares the source page's content/resources object refs); from
+    // another document the page and the objects it reaches are deep-
+    // imported (its annotations and unsaved edits are not carried over).
     Page Add(const Page& page);
     // Insert a new blank page before 1-based `pageNumber` (append when
     // out of range). Returns the new page.
     Page Insert(int pageNumber);
-    // Insert a copy of `page` before 1-based `pageNumber`.
+    // Insert a copy of `page` before 1-based `pageNumber` (append when
+    // out of range); copy semantics as for Add(const Page&).
     Page Insert(int pageNumber, const Page& page);
     // Remove all pages.
     void Delete();
@@ -59,6 +62,10 @@ public:
 private:
     friend class Document;
     explicit PageCollection(Document& doc) noexcept;
+
+    // Deep-import `page` from another document before 1-based
+    // `pageNumber` (<= 0 or out of range appends).
+    Page ImportFrom(const Page& page, int pageNumber);
 
     Document* doc_ = nullptr;
 };

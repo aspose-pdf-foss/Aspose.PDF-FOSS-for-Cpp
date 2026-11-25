@@ -2956,27 +2956,36 @@ std::size_t Document::AddPageInternal(int insertAt1Based, bool copy,
         foundation::pages_tree::Parse(
             std::span<const std::byte>(bytes_.data(), bytes_.size())));
 
-    // Re-index the staged, per-leaf write state for the page just inserted
-    // at `pos`. The leaves at index >= pos shift up by one; the new page's
-    // own slot starts empty. For an append (pos == old leaf count) nothing
-    // shifts, so previously staged annotations / geometry / paragraphs on
-    // earlier pages survive the Add (they used to be discarded here, which
-    // dropped any annotation or SetPageSize staged before a later
-    // Pages().Add()).
-    auto shift_slots = [pos](auto& vec) {
-        if (pos < vec.size())
-            vec.insert(vec.begin() + static_cast<std::ptrdiff_t>(pos),
-                       nullptr);
+    ShiftStagedPageState(pos, 1);
+    return pos;
+}
+
+void Document::ShiftStagedPageState(std::size_t pos, std::size_t count) {
+    // Re-index the staged, per-leaf write state after `count` pages were
+    // inserted at leaf `pos`. The leaves at index >= pos shift up by
+    // `count`; the new pages' own slots start empty. For an append (pos ==
+    // old leaf count) nothing shifts, so previously staged annotations /
+    // geometry / paragraphs on earlier pages survive the insertion.
+    if (count == 0) return;
+    auto shift_slots = [pos, count](auto& vec) {
+        if (pos >= vec.size()) return;
+        // Slots hold move-only unique_ptrs: grow by `count` empty slots
+        // via move iterators (insert(pos, n, value) needs a copy).
+        std::decay_t<decltype(vec)> empty(count);
+        vec.insert(vec.begin() + static_cast<std::ptrdiff_t>(pos),
+                   std::make_move_iterator(empty.begin()),
+                   std::make_move_iterator(empty.end()));
     };
     shift_slots(page_annotations_);
     shift_slots(page_paragraphs_);
     shift_slots(page_resources_);
     shift_slots(page_artifacts_);
 
-    auto shift_keys = [pos](auto& m) {
+    auto shift_keys = [pos, count](auto& m) {
         std::decay_t<decltype(m)> shifted;
         for (auto& [leaf, value] : m)
-            shifted.emplace(leaf >= pos ? leaf + 1 : leaf, std::move(value));
+            shifted.emplace(leaf >= pos ? leaf + count : leaf,
+                            std::move(value));
         m = std::move(shifted);
     };
     shift_keys(pending_mediabox_);
@@ -2989,7 +2998,6 @@ std::size_t Document::AddPageInternal(int insertAt1Based, bool copy,
         !(pending_mediabox_.empty() && pending_cropbox_.empty() &&
           pending_trimbox_.empty() && pending_bleedbox_.empty() &&
           pending_artbox_.empty() && pending_rotation_.empty());
-    return pos;
 }
 
 void Document::DeletePagesInternal(std::vector<int> pageNumbers1Based) {
@@ -3120,10 +3128,11 @@ foundation::objects::Value RemapValue(
 
 }  // namespace
 
-void Document::ImportPagesFrom(const Document& src,
-                               const std::vector<int>& srcPages1Based,
-                               int insertAt1Based) {
-    if (!tree_ || !src.tree_) return;
+std::size_t Document::ImportPagesFrom(const Document& src,
+                                      const std::vector<int>& srcPages1Based,
+                                      int insertAt1Based) {
+    const std::size_t none = tree_ ? tree_->leaves.size() : 0;
+    if (!tree_ || !src.tree_) return none;
 
     auto dspan = std::span<const std::byte>(bytes_.data(), bytes_.size());
     auto dtrailer = foundation::trailer::Parse(dspan);
@@ -3161,7 +3170,7 @@ void Document::ImportPagesFrom(const Document& src,
             is_page.insert(id);
         }
     }
-    if (src_page_ids.empty()) return;
+    if (src_page_ids.empty()) return none;
 
     // BFS the reachable object graph (index-grown worklist).
     std::vector<std::uint32_t> order;
@@ -3276,11 +3285,8 @@ void Document::ImportPagesFrom(const Document& src,
     tree_ = std::make_unique<foundation::pages_tree::Tree>(
         foundation::pages_tree::Parse(
             std::span<const std::byte>(bytes_.data(), bytes_.size())));
-    page_annotations_.clear();
-    pending_mediabox_.clear();
-    pending_cropbox_.clear();
-    pending_rotation_.clear();
-    page_geom_dirty_ = false;
+    ShiftStagedPageState(pos, src_page_ids.size());
+    return pos;
 }
 
 // ===== Document outline (/Outlines) ==========================================

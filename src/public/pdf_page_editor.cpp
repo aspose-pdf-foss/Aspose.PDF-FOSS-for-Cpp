@@ -3,6 +3,7 @@
 #include <utility>
 
 #include <aspose/pdf/document.hpp>
+#include <aspose/pdf/page.hpp>
 #include <aspose/pdf/page_collection.hpp>
 
 namespace Aspose::Pdf::Facades {
@@ -19,12 +20,17 @@ int PdfPageEditor::GetPages() {
                : static_cast<int>(document_->Pages().Count());
 }
 
-Aspose::Pdf::PageSize PdfPageEditor::GetPageSize(int) {
-    // v1 stub — canonical US-Letter default until Page exposes Rect/CropBox.
-    return Aspose::Pdf::PageSize::PageLetter();
+Aspose::Pdf::PageSize PdfPageEditor::GetPageSize(int pageId) {
+    if (document_ == nullptr) return Aspose::Pdf::PageSize(0.0f, 0.0f);
+    const auto rect = document_->Pages()[pageId].Rect();
+    return Aspose::Pdf::PageSize(static_cast<float>(rect.Width()),
+                                 static_cast<float>(rect.Height()));
 }
 
-int PdfPageEditor::GetPageRotation(int) { return 0; }
+int PdfPageEditor::GetPageRotation(int pageId) {
+    if (document_ == nullptr) return 0;
+    return static_cast<int>(document_->Pages()[pageId].Rotate()) * 90;
+}
 
 void PdfPageEditor::ApplyChanges() {}
 

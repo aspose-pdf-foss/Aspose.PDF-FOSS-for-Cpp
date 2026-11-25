@@ -549,15 +549,18 @@ private:
     // /Pages tree (root /Kids lists all leaf /Page refs directly) —
     // throws on a nested tree. Each call rewrites bytes_ via an
     // incremental /Kids + /Count update and re-parses tree_, so Count()
-    // and indexing reflect the change immediately. Per-page caches
-    // (annotations, staged geometry) are cleared on mutation since leaf
-    // indices shift. `insertAt1Based <= 0` appends. When `copy` is true
+    // and indexing reflect the change immediately. On insertion, staged
+    // per-page state (annotations, geometry) shifts with its page
+    // (ShiftStagedPageState). `insertAt1Based <= 0` appends. When `copy` is true
     // the new page shallow-copies srcLeaf's /MediaBox / /Contents /
     // /Resources / /Rotate (shared object refs). Returns the new leaf
     // index.
     std::size_t AddPageInternal(int insertAt1Based, bool copy,
                                 std::size_t srcLeaf, double width,
                                 double height);
+    // Re-index staged per-leaf state after `count` pages were inserted
+    // at leaf `pos` (leaves >= pos move up by `count`).
+    void ShiftStagedPageState(std::size_t pos, std::size_t count);
     void DeletePagesInternal(std::vector<int> pageNumbers1Based);
     void DeleteAllPagesInternal();
 
@@ -566,12 +569,15 @@ private:
     // object graph it reaches (contents / resources / fonts / xobjects)
     // into this document with renumbered ids, appends the new page refs
     // to the /Pages root at `insertAt1Based` (<=0 appends), rewrites
-    // bytes_ via incremental update, and re-parses tree_. v1: flat
-    // /Pages tree on both sides; /Parent is rebound, /Annots dropped on
-    // imported pages. The source must outlive the call.
-    void ImportPagesFrom(const Document& src,
-                         const std::vector<int>& srcPages1Based,
-                         int insertAt1Based);
+    // bytes_ via incremental update, and re-parses tree_. Staged per-page
+    // edits on this document shift with their pages; edits staged on the
+    // source but not yet saved are not carried over. v1: flat /Pages tree
+    // on both sides; /Parent is rebound, /Annots dropped on imported
+    // pages. The source must outlive the call. Returns the leaf index of
+    // the first imported page (the leaf count when nothing was imported).
+    std::size_t ImportPagesFrom(const Document& src,
+                                const std::vector<int>& srcPages1Based,
+                                int insertAt1Based);
 
     // ---- Document outline (/Outlines) — backs PdfBookmarkEditor ----
     // Stage the full outline tree for the next Save (replaces any

@@ -9,6 +9,21 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ## [Unreleased]
 
+### Added
+
+- `PageCollection::Add(const Page&)` and `PageCollection::Insert(int, const Page&)` accept a page
+  from another document: the page and the objects it reaches are deep-imported. Annotations and
+  unsaved edits on the source page are not carried over.
+
+### Fixed
+
+- `PdfFileInfo::GetPageWidth`, `GetPageHeight`, `GetPageRotation`, `GetPageXOffset`, and
+  `GetPageYOffset`, and `PdfPageEditor::GetPageSize` and `GetPageRotation` now return the page's
+  real media box and rotation instead of fixed US-Letter values. An out-of-range page number throws
+  `std::out_of_range`.
+- `PdfFileInfo(path, password)` now opens encrypted files with the given password; a wrong
+  password throws `std::runtime_error`. Previously the password was ignored.
+
 ## [1.0.1] - 2026-09-29
 
 Packaging-only release; the library code and public API are unchanged from 1.0.0.

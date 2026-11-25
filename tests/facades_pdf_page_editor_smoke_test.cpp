@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include <aspose/pdf/facades/pdf_page_editor.hpp>
 #include <aspose/pdf/facades/vertical_alignment_type.hpp>
 #include <aspose/pdf/horizontal_alignment.hpp>
+#include <aspose/pdf/page.hpp>
 #include <aspose/pdf/page_collection.hpp>
 #include <aspose/pdf/page_size.hpp>
 #include <aspose/pdf/vertical_alignment.hpp>
@@ -55,7 +57,7 @@ TEST(FacadesPdfPageEditorSmoke, GetPagesReal) {
     EXPECT_GT(editor.GetPages(), 0);
 }
 
-TEST(FacadesPdfPageEditorSmoke, GeometryStubs) {
+TEST(FacadesPdfPageEditorSmoke, GeometryOfLetterPage) {
     Document doc{HelloWorldPdf()};
     PdfPageEditor editor{doc};
     auto sz = editor.GetPageSize(1);
@@ -97,4 +99,31 @@ TEST(FacadesPdfPageEditorSmoke, PropertyRoundtrip) {
     EXPECT_EQ(editor.HorizontalAlignment(), HorizontalAlignment::Left);
     EXPECT_EQ(editor.VerticalAlignment(), VerticalAlignmentType::Bottom());
     EXPECT_EQ(editor.VerticalAlignmentType(), VerticalAlignment::Top);
+}
+
+TEST(FacadesPdfPageEditorSmoke, GeometryReflectsPageBoxes) {
+    Document doc;
+    Page p1 = doc.Pages().Add();
+    Page p2 = doc.Pages().Add();
+    p2.MediaBox(Rectangle(0, 0, 595, 842, true));
+    p2.Rotate(Rotation::on180);
+
+    PdfPageEditor editor{doc};
+    auto s1 = editor.GetPageSize(1);
+    EXPECT_FLOAT_EQ(s1.Width(), 612.0f);
+    EXPECT_FLOAT_EQ(s1.Height(), 792.0f);
+    EXPECT_EQ(editor.GetPageRotation(1), 0);
+
+    auto s2 = editor.GetPageSize(2);
+    EXPECT_FLOAT_EQ(s2.Width(), 595.0f);
+    EXPECT_FLOAT_EQ(s2.Height(), 842.0f);
+    EXPECT_EQ(editor.GetPageRotation(2), 180);
+    (void)p1;
+}
+
+TEST(FacadesPdfPageEditorSmoke, GeometryOutOfRangeThrows) {
+    Document doc{HelloWorldPdf()};
+    PdfPageEditor editor{doc};
+    EXPECT_THROW(editor.GetPageSize(5), std::out_of_range);
+    EXPECT_THROW(editor.GetPageRotation(0), std::out_of_range);
 }

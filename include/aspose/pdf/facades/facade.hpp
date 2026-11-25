@@ -38,6 +38,11 @@ public:
     const Aspose::Pdf::Document* Document() const noexcept;
 
 protected:
+    // Bind to a document the facade opened itself and take ownership
+    // (e.g. one opened with a password). Named apart from BindPdf so a
+    // derived `using ...::BindPdf;` cannot re-export it publicly.
+    void BindOwned(std::unique_ptr<Aspose::Pdf::Document> doc);
+
     Aspose::Pdf::Document* document_ = nullptr;
 
 private:

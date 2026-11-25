@@ -45,6 +45,9 @@ class PdfFileInfo : public SaveableFacade {
 public:
     PdfFileInfo() noexcept = default;
     explicit PdfFileInfo(const std::string& inputFile);
+    // Opens an encrypted file with its user or owner password (ignored
+    // for an unencrypted file). A wrong password throws
+    // std::runtime_error, like Document(path, password).
     PdfFileInfo(const std::string& inputFile,
                 const std::string& password);
     explicit PdfFileInfo(Aspose::Pdf::Document& document);
@@ -64,10 +67,11 @@ public:
     std::string GetMetaInfo(const std::string& name) const;
     void SetMetaInfo(const std::string& name, const std::string& value);
 
-    // Page geometry accessors. v1 returns canonical defaults
-    // (612 x 792 letter size; rotation=0; offsets=0). Real
-    // per-page geometry lands when Page exposes Rect / Rotate /
-    // CropBox.
+    // Page geometry of the 1-based page `pageNum`, read from its media
+    // box (Page::Rect) and /Rotate: width / height in points, rotation
+    // in degrees (0 / 90 / 180 / 270), offsets = the media box's lower-
+    // left corner. Unbound facade → 0; out-of-range page → throws
+    // std::out_of_range.
     float GetPageHeight(int pageNum) const;
     float GetPageRotation(int pageNum) const;
     float GetPageWidth(int pageNum) const;

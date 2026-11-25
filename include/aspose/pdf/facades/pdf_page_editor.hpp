@@ -5,11 +5,10 @@
 // zoom / align pages + page transitions). Mirrors canonical
 // Aspose.Pdf.Facades.PdfPageEditor; extends SaveableFacade.
 //
-// v1: GetPages reads the real page count; the transform operations
-// (MovePosition / Rotation / Zoom / alignment / transitions) are staged
-// into properties but ApplyChanges + per-page geometry are stubs — the
-// page content-transform + Page geometry (Rect/Rotate/CropBox) wiring is
-// deferred. GetPageSize / GetPageRotation return canonical defaults.
+// v1: GetPages / GetPageSize / GetPageRotation read the real page tree;
+// the transform operations (MovePosition / Rotation / Zoom / alignment /
+// transitions) are staged into properties but ApplyChanges is a stub —
+// the page content-transform wiring is deferred.
 //
 // Phased drops:
 //   * GetPageBoxSize (System.Drawing.Rectangle return) — Drawing.Rectangle
@@ -66,8 +65,8 @@ public:
     void MovePosition(float offsetX, float offsetY);
     // Number of pages in the bound document (real).
     int GetPages();
-    // v1 returns the canonical US-Letter default; real per-page geometry
-    // lands when Page exposes Rect / CropBox.
+    // Media-box size and rotation (degrees) of the 1-based page `pageId`.
+    // Unbound → 0 x 0 / 0; out-of-range page → throws std::out_of_range.
     Aspose::Pdf::PageSize GetPageSize(int pageId);
     int GetPageRotation(int pageId);
     void ApplyChanges();
