@@ -20,14 +20,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux jobs test the minimum supported compilers (README: gcc 13+,
+          # clang 16+). They are pinned to an image that ships them, since
+          # ubuntu-latest moves on and drops old compiler versions.
           - name: Linux / gcc
-            os: ubuntu-latest
+            os: ubuntu-24.04
             cc: gcc-13
             cxx: g++-13
+            packages: g++-13
           - name: Linux / clang
-            os: ubuntu-latest
+            os: ubuntu-24.04
             cc: clang-16
             cxx: clang++-16
+            packages: clang-16
           - name: Windows / MSVC
             os: windows-latest
 
@@ -38,6 +43,15 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.x'
+
+      - name: Install compiler (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v "${{ matrix.cxx }}" >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ${{ matrix.packages }}
+          fi
+          "${{ matrix.cxx }}" --version
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
