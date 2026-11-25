@@ -421,7 +421,8 @@ private:
     // page-binding step lands in a follow-on beat together with
     // pageNumber tracking on Form::Add.
     // When Form::Flatten() was requested: write the captured fields
-    // (AppendAcroFormFieldsUpdate), then drop the catalog /AcroForm.
+    // (AppendAcroFormFieldsUpdate), burn the widgets into the page content
+    // (AppendFlattenWidgetsUpdate), then drop the catalog /AcroForm.
     std::vector<std::byte> AppendAcroFormUpdate(
         const std::vector<std::byte>& working) const;
     // The field-writing pass over `fields` (the form's current fields, or
@@ -429,6 +430,12 @@ private:
     std::vector<std::byte> AppendAcroFormFieldsUpdate(
         const std::vector<std::byte>& working,
         const std::vector<Aspose::Pdf::Forms::Field*>& fields) const;
+    // Form::Flatten() burn-in: draw every visible widget's normal
+    // appearance into its page content (q ... cm /AspFl<N> Do Q, the
+    // existing content wrapped in q/Q), then drop all widgets from the
+    // page /Annots. Hidden / NoView widgets are dropped without drawing.
+    std::vector<std::byte> AppendFlattenWidgetsUpdate(
+        const std::vector<std::byte>& working) const;
     // Remove /AcroForm from the catalog (no-op when absent).
     std::vector<std::byte> RemoveCatalogAcroForm(
         const std::vector<std::byte>& working) const;

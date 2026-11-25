@@ -3602,6 +3602,37 @@ std::string WidgetOnState(const foundation::objects::Dict& widget,
     return "Yes";
 }
 
+// Header of a /Type /XObject /Subtype /Form appearance stream with a /BBox of
+// [0 0 w h] and a single Type1 font resource `font_key` -> `base_font`.
+foundation::objects::Dict MakeAppearanceHeader(double w, double h,
+                                               const char* font_key,
+                                               const char* base_font) {
+    namespace fo = foundation::objects;
+    auto dict_v = [](fo::Dict dd) { fo::Value v; v.v = std::move(dd); return v; };
+    fo::Dict font_inner;
+    font_inner.entries.emplace_back("Type", PageNameValue("Font"));
+    font_inner.entries.emplace_back("Subtype", PageNameValue("Type1"));
+    font_inner.entries.emplace_back("BaseFont", PageNameValue(base_font));
+    fo::Dict fonts;
+    fonts.entries.emplace_back(font_key, dict_v(std::move(font_inner)));
+    fo::Dict resources;
+    resources.entries.emplace_back("Font", dict_v(std::move(fonts)));
+    fo::Array bbox;
+    for (double dv : {0.0, 0.0, w, h}) {
+        fo::Value v; v.v = dv; bbox.items.push_back(std::move(v));
+    }
+    fo::Dict header;
+    header.entries.emplace_back("Type", PageNameValue("XObject"));
+    header.entries.emplace_back("Subtype", PageNameValue("Form"));
+    { fo::Value v; v.v = std::int64_t{1};
+      header.entries.emplace_back("FormType", std::move(v)); }
+    { fo::Value v; v.v = std::move(bbox);
+      header.entries.emplace_back("BBox", std::move(v)); }
+    header.entries.emplace_back("Resources", dict_v(std::move(resources)));
+    return header;
+}
+
+
 }  // namespace
 
 void Document::ApplyTextStamps(const std::vector<TextStampReq>& stamps) {
@@ -8424,7 +8455,8 @@ std::vector<std::byte> Document::AppendAcroFormUpdate(
         return AppendAcroFormFieldsUpdate(working, form_->fields_);
     std::vector<Aspose::Pdf::Forms::Field*> fields = form_->flatten_fields_;
     fields.insert(fields.end(), form_->fields_.begin(), form_->fields_.end());
-    return RemoveCatalogAcroForm(AppendAcroFormFieldsUpdate(working, fields));
+    return RemoveCatalogAcroForm(AppendFlattenWidgetsUpdate(
+        AppendAcroFormFieldsUpdate(working, fields)));
 }
 
 std::vector<std::byte> Document::RemoveCatalogAcroForm(
@@ -8463,6 +8495,304 @@ std::vector<std::byte> Document::RemoveCatalogAcroForm(
         working_span,
         std::span<const foundation::pdf_writer_incremental::DirtyObject>(
             &cat_dirty, 1));
+}
+
+std::vector<std::byte> Document::AppendFlattenWidgetsUpdate(
+        const std::vector<std::byte>& working) const {
+    namespace fa = foundation::field_appearance;
+    namespace fo = foundation::objects;
+    auto working_span =
+        std::span<const std::byte>(working.data(), working.size());
+    foundation::trailer::Trailer trailer_bundle;
+    fo::Dump dump;
+    foundation::pages_tree::Tree tree;
+    try {
+        trailer_bundle = foundation::trailer::Parse(working_span);
+        dump = fo::Parse(working_span);
+        tree = foundation::pages_tree::Parse(working_span);
+    } catch (const std::exception&) {
+        return working;
+    }
+
+    std::uint32_t next_id = trailer_bundle.size;
+    for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    std::vector<std::unique_ptr<std::vector<std::byte>>> bodies;
+
+    auto num = [](const fo::Value& v) {
+        if (const auto* d = std::get_if<double>(&v.v)) return *d;
+        if (const auto* i = std::get_if<std::int64_t>(&v.v))
+            return static_cast<double>(*i);
+        return 0.0;
+    };
+    auto resolve = [&](const fo::Value* v) -> const fo::Value* {
+        if (v == nullptr) return nullptr;
+        if (const auto* r = std::get_if<fo::Ref>(&v->v)) {
+            const auto* o = FindObject(dump, r->id);
+            return o ? &o->value : nullptr;
+        }
+        return v;
+    };
+    // A field attribute, inherited through the /Parent chain (§12.7.3.1).
+    auto inherited = [&](const fo::Dict& d,
+                         const char* key) -> const fo::Value* {
+        const fo::Dict* cur = &d;
+        for (int depth = 0; cur != nullptr && depth < 32; ++depth) {
+            if (const auto* v = DictGet(*cur, key)) return resolve(v);
+            const auto* pv = resolve(DictGet(*cur, "Parent"));
+            cur = pv ? std::get_if<fo::Dict>(&pv->v) : nullptr;
+        }
+        return nullptr;
+    };
+    auto add_stream = [&](fo::Dict header,
+                          const std::string& content) -> std::uint32_t {
+        bodies.push_back(std::make_unique<std::vector<std::byte>>(
+            reinterpret_cast<const std::byte*>(content.data()),
+            reinterpret_cast<const std::byte*>(content.data()) +
+                content.size()));
+        fo::Stream st;
+        st.header = std::move(header);
+        st.body = std::span<const std::byte>(bodies.back()->data(),
+                                             bodies.back()->size());
+        const std::uint32_t id = next_id++;
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = id; d.generation = 0; d.value.v = std::move(st);
+        dirty.push_back(std::move(d));
+        return id;
+    };
+
+    // The normal-appearance stream id to burn for `widget`: its /AP /N
+    // stream (or the /AS entry of a state dictionary); for a widget with no
+    // /AP, one generated from the field's value. 0 = nothing to draw.
+    auto appearance_for = [&](const fo::Dict& widget, double w,
+                              double h) -> std::uint32_t {
+        if (const auto* apv = resolve(DictGet(widget, "AP"))) {
+            const auto* ap = std::get_if<fo::Dict>(&apv->v);
+            const fo::Value* nv = ap ? DictGet(*ap, "N") : nullptr;
+            if (nv == nullptr) return 0;
+            if (const auto* r = std::get_if<fo::Ref>(&nv->v)) {
+                const auto* o = FindObject(dump, r->id);
+                if (o == nullptr) return 0;
+                if (std::get_if<fo::Stream>(&o->value.v)) return r->id;
+                nv = &o->value;  // a state dictionary held indirectly
+            }
+            const auto* states = std::get_if<fo::Dict>(&nv->v);
+            if (states == nullptr) return 0;
+            const std::string as = ReadStrOrName(DictGet(widget, "AS"));
+            const auto* sv = as.empty() ? nullptr : DictGet(*states, as);
+            const auto* sr = sv ? std::get_if<fo::Ref>(&sv->v) : nullptr;
+            if (sr == nullptr) return 0;
+            const auto* so = FindObject(dump, sr->id);
+            return (so && std::get_if<fo::Stream>(&so->value.v)) ? sr->id : 0;
+        }
+        // No /AP (e.g. a NeedAppearances file): generate from the value.
+        const std::string ft = ReadStrOrName(inherited(widget, "FT"));
+        const fo::Value* ffv = inherited(widget, "Ff");
+        const std::int64_t ff = ffv ? static_cast<std::int64_t>(num(*ffv)) : 0;
+        std::string content;
+        const char* font_key = fa::kTextFontKey;
+        const char* base_font = fa::kTextBaseFont;
+        if (ft == "Tx" || ft == "Ch") {
+            content = fa::TextBox(w, h, ReadStrOrName(inherited(widget, "V")));
+        } else if (ft == "Btn") {
+            const std::string as = ReadStrOrName(DictGet(widget, "AS"));
+            const bool on = !as.empty() && as != "Off";
+            if (ff & (1LL << 16)) {
+                content = fa::PushButton(w, h, "");
+            } else if (ff & (1LL << 15)) {
+                content = fa::RadioButton(w, h, on);
+            } else {
+                content = fa::CheckBox(w, h, on);
+                font_key = fa::kCheckFontKey;
+                base_font = fa::kCheckBaseFont;
+            }
+        } else {
+            return 0;  // signature or unknown field type: nothing to draw
+        }
+        return add_stream(
+            MakeAppearanceHeader(w, h, font_key, base_font), content);
+    };
+
+    for (const auto& leaf : tree.leaves) {
+        const auto* page_obj = FindObject(dump, leaf.id);
+        const auto* page_dict =
+            page_obj ? std::get_if<fo::Dict>(&page_obj->value.v) : nullptr;
+        if (page_dict == nullptr) continue;
+        const auto* annots_v = resolve(DictGet(*page_dict, "Annots"));
+        const auto* annots =
+            annots_v ? std::get_if<fo::Array>(&annots_v->v) : nullptr;
+        if (annots == nullptr) continue;
+
+        fo::Array kept;
+        std::string burn;  // "q <cm> cm /AspFlN Do Q" per burned widget
+        std::vector<std::pair<std::string, std::uint32_t>> xobjects;
+        bool had_widget = false;
+
+        // Existing /XObject names, to pick non-conflicting AspFl<N> keys.
+        // /Resources may be inherited from an ancestor /Pages node.
+        fo::Dict resources;
+        {
+            const fo::Dict* cur = page_dict;
+            for (int depth = 0; cur != nullptr && depth < 32; ++depth) {
+                if (const auto* rv = DictGet(*cur, "Resources")) {
+                    resources = ResolveDictCopy(*rv, dump);
+                    break;
+                }
+                const auto* pv = resolve(DictGet(*cur, "Parent"));
+                cur = pv ? std::get_if<fo::Dict>(&pv->v) : nullptr;
+            }
+        }
+        fo::Dict xobject_dict;
+        if (const auto* xv = DictGet(resources, "XObject"))
+            xobject_dict = ResolveDictCopy(*xv, dump);
+        int name_counter = 0;
+        auto fresh_name = [&]() {
+            std::string n;
+            do {
+                n = "AspFl" + std::to_string(++name_counter);
+            } while (DictGet(xobject_dict, n) != nullptr);
+            return n;
+        };
+
+        for (const auto& item : annots->items) {
+            const auto* av = resolve(&item);
+            const auto* ad = av ? std::get_if<fo::Dict>(&av->v) : nullptr;
+            if (ad == nullptr ||
+                ReadStrOrName(DictGet(*ad, "Subtype")) != "Widget") {
+                kept.items.push_back(item);
+                continue;
+            }
+            had_widget = true;
+            const fo::Value* fv = DictGet(*ad, "F");
+            const std::int64_t flags =
+                fv ? static_cast<std::int64_t>(num(*fv)) : 0;
+            if (flags & (2 | 32)) continue;  // Hidden / NoView
+            const auto* rv = resolve(DictGet(*ad, "Rect"));
+            const auto* ra = rv ? std::get_if<fo::Array>(&rv->v) : nullptr;
+            if (ra == nullptr || ra->items.size() != 4) continue;
+            const double x0 = std::min(num(ra->items[0]), num(ra->items[2]));
+            const double x1 = std::max(num(ra->items[0]), num(ra->items[2]));
+            const double y0 = std::min(num(ra->items[1]), num(ra->items[3]));
+            const double y1 = std::max(num(ra->items[1]), num(ra->items[3]));
+            const double w = x1 - x0, h = y1 - y0;
+            if (w <= 0.0 || h <= 0.0) continue;
+            const std::uint32_t ap_id = appearance_for(*ad, w, h);
+            if (ap_id == 0) continue;
+
+            // §12.5.5: map the form's /BBox, transformed by its /Matrix, onto
+            // the widget /Rect. Do applies /Matrix itself; cm supplies the
+            // scale + offset to the rect.
+            const auto* ap_obj = FindObject(dump, ap_id);
+            const fo::Dict* hdr = nullptr;
+            if (ap_obj != nullptr) {
+                if (const auto* st = std::get_if<fo::Stream>(&ap_obj->value.v))
+                    hdr = &st->header;
+            }
+            // A stream generated above is not in `dump`: its BBox is [0 0 w h].
+            double bx0 = 0, by0 = 0, bx1 = w, by1 = h;
+            double m[6] = {1, 0, 0, 1, 0, 0};
+            if (hdr != nullptr) {
+                const auto* bv = resolve(DictGet(*hdr, "BBox"));
+                const auto* ba = bv ? std::get_if<fo::Array>(&bv->v) : nullptr;
+                if (ba == nullptr || ba->items.size() != 4) continue;
+                bx0 = num(ba->items[0]); by0 = num(ba->items[1]);
+                bx1 = num(ba->items[2]); by1 = num(ba->items[3]);
+                const auto* mv = resolve(DictGet(*hdr, "Matrix"));
+                const auto* ma = mv ? std::get_if<fo::Array>(&mv->v) : nullptr;
+                if (ma != nullptr && ma->items.size() == 6)
+                    for (int i = 0; i < 6; ++i) m[i] = num(ma->items[i]);
+            }
+            double tx0 = 0, ty0 = 0, tx1 = 0, ty1 = 0;
+            bool first = true;
+            for (double cx : {bx0, bx1}) {
+                for (double cy : {by0, by1}) {
+                    const double px = m[0] * cx + m[2] * cy + m[4];
+                    const double py = m[1] * cx + m[3] * cy + m[5];
+                    if (first) { tx0 = tx1 = px; ty0 = ty1 = py; first = false; }
+                    tx0 = std::min(tx0, px); tx1 = std::max(tx1, px);
+                    ty0 = std::min(ty0, py); ty1 = std::max(ty1, py);
+                }
+            }
+            if (tx1 - tx0 <= 0.0 || ty1 - ty0 <= 0.0) continue;
+            const double sx = w / (tx1 - tx0), sy = h / (ty1 - ty0);
+            const double ox = x0 - sx * tx0, oy = y0 - sy * ty0;
+            const std::string name = fresh_name();
+            burn += "q " + FmtNum(sx) + " 0 0 " + FmtNum(sy) + " " +
+                    FmtNum(ox) + " " + FmtNum(oy) + " cm /" + name +
+                    " Do Q\n";
+            xobjects.emplace_back(name, ap_id);
+        }
+        if (!had_widget) continue;
+
+        fo::Dict updated = *page_dict;
+        auto erase_key = [&](const char* key) {
+            for (auto it = updated.entries.begin();
+                 it != updated.entries.end();) {
+                if (it->first == key) it = updated.entries.erase(it);
+                else ++it;
+            }
+        };
+        erase_key("Annots");
+        if (!kept.items.empty()) {
+            fo::Value v; v.v = std::move(kept);
+            updated.entries.emplace_back("Annots", std::move(v));
+        }
+        if (!burn.empty()) {
+            // Isolate the existing content (an unbalanced q / cm in it must
+            // not move the burned widgets): [q, ...old..., Q + widgets].
+            fo::Array contents;
+            auto push_ref = [&](std::uint32_t id) {
+                fo::Value v; v.v = fo::Ref{id, 0};
+                contents.items.push_back(std::move(v));
+            };
+            push_ref(add_stream(fo::Dict{}, "q\n"));
+            if (const auto* cv = DictGet(*page_dict, "Contents")) {
+                if (const auto* arr = std::get_if<fo::Array>(&cv->v)) {
+                    for (const auto& c : arr->items) contents.items.push_back(c);
+                } else if (std::get_if<fo::Ref>(&cv->v)) {
+                    // A ref to a content stream, or to an array of them.
+                    const auto* rv2 = resolve(cv);
+                    if (rv2 != nullptr) {
+                        if (const auto* arr2 = std::get_if<fo::Array>(&rv2->v))
+                            for (const auto& c : arr2->items)
+                                contents.items.push_back(c);
+                        else
+                            contents.items.push_back(*cv);
+                    }
+                }
+            }
+            push_ref(add_stream(fo::Dict{}, "Q\n" + burn));
+            erase_key("Contents");
+            { fo::Value v; v.v = std::move(contents);
+              updated.entries.emplace_back("Contents", std::move(v)); }
+
+            for (const auto& [name, id] : xobjects) {
+                fo::Value v; v.v = fo::Ref{id, 0};
+                xobject_dict.entries.emplace_back(name, std::move(v));
+            }
+            for (auto it = resources.entries.begin();
+                 it != resources.entries.end();) {
+                if (it->first == "XObject") it = resources.entries.erase(it);
+                else ++it;
+            }
+            { fo::Value v; v.v = std::move(xobject_dict);
+              resources.entries.emplace_back("XObject", std::move(v)); }
+            erase_key("Resources");
+            { fo::Value v; v.v = std::move(resources);
+              updated.entries.emplace_back("Resources", std::move(v)); }
+        }
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = page_obj->id;
+        d.generation = page_obj->generation;
+        d.value.v = std::move(updated);
+        dirty.push_back(std::move(d));
+    }
+
+    if (dirty.empty()) return working;
+    return foundation::pdf_writer_incremental::AppendIncremental(
+        working_span,
+        std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+            dirty.data(), dirty.size()));
 }
 
 std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
@@ -8575,23 +8905,8 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
     auto emit_ap = [&](double w, double h, const std::string& content,
                        const char* font_key,
                        const char* base_font) -> std::uint32_t {
-        foundation::objects::Dict font_inner;
-        font_inner.entries.emplace_back("Type", PageNameValue("Font"));
-        font_inner.entries.emplace_back("Subtype", PageNameValue("Type1"));
-        font_inner.entries.emplace_back("BaseFont", PageNameValue(base_font));
-        foundation::objects::Dict fonts;
-        fonts.entries.emplace_back(font_key, dict_v(std::move(font_inner)));
-        foundation::objects::Dict resources;
-        resources.entries.emplace_back("Font", dict_v(std::move(fonts)));
-        foundation::objects::Array bbox;
-        for (double dv : {0.0, 0.0, w, h}) bbox.items.push_back(real_v(dv));
-        foundation::objects::Dict header;
-        header.entries.emplace_back("Type", PageNameValue("XObject"));
-        header.entries.emplace_back("Subtype", PageNameValue("Form"));
-        header.entries.emplace_back("FormType", int_v(1));
-        { foundation::objects::Value v; v.v = std::move(bbox);
-          header.entries.emplace_back("BBox", std::move(v)); }
-        header.entries.emplace_back("Resources", dict_v(std::move(resources)));
+        foundation::objects::Dict header =
+            MakeAppearanceHeader(w, h, font_key, base_font);
         ap_bodies.push_back(std::make_unique<std::vector<std::byte>>(
             reinterpret_cast<const std::byte*>(content.data()),
             reinterpret_cast<const std::byte*>(content.data()) +
