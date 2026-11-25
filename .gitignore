@@ -18,3 +18,6 @@ build-rel/
 .state.lock
 .working.json
 stub_methods.json
+
+# Local working notes (design specs, plans) — not part of the repository
+docs/
