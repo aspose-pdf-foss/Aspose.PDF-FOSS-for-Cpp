@@ -1,3 +1,4 @@
+#include <array>
 #include "text_extractor.hpp"
 
 #include <algorithm>
@@ -487,57 +488,105 @@ std::string DecodeString(
 }
 
 // Helper: extract text from a single page
-std::string ExtractTextFromPage(
-        const foundation::objects::Dict& page_dict,
-        const foundation::objects::Dump& dump,
-        std::span<const std::byte> pdf_bytes,
-        const CryptoCtx& crypto) {
-    // Get /Resources
-    foundation::objects::Dict resources = ResolveResources(page_dict, dump);
-
-    // Get /Contents
-    const auto* contents_entry = FindDictEntry(page_dict, "Contents");
-    if (!contents_entry) {
-        return ""; // No content stream
-    }
-
-    // Capture the Ref identity BEFORE resolution so the single-
-    // Stream branch can pass the right per-object key to the
-    // decryptor. The Array branch captures per-item identity in
-    // the loop below.
-    auto [contents_obj_id, contents_gen] = RefIdentity(contents_entry->second);
-    foundation::objects::Value contents_val = ResolveValue(contents_entry->second, dump);
-
-    std::vector<std::byte> content_bytes;
-
-    if (std::holds_alternative<foundation::objects::Stream>(contents_val.v)) {
-        const foundation::objects::Stream& stream = std::get<foundation::objects::Stream>(contents_val.v);
-        content_bytes = ResolveStreamBytes(
-            stream, dump, pdf_bytes, crypto,
-            contents_obj_id, contents_gen);
-    } else if (std::holds_alternative<foundation::objects::Array>(contents_val.v)) {
-        const foundation::objects::Array& arr = std::get<foundation::objects::Array>(contents_val.v);
-        for (const auto& item : arr.items) {
-            auto [item_obj_id, item_gen] = RefIdentity(item);
-            foundation::objects::Value resolved = ResolveValue(item, dump);
-            if (!std::holds_alternative<foundation::objects::Stream>(resolved.v)) {
-                throw std::runtime_error("/Contents array contains non-Stream value");
-            }
-            const foundation::objects::Stream& stream = std::get<foundation::objects::Stream>(resolved.v);
-            std::vector<std::byte> stream_bytes = ResolveStreamBytes(
-                stream, dump, pdf_bytes, crypto,
-                item_obj_id, item_gen);
-            content_bytes.insert(content_bytes.end(), stream_bytes.begin(), stream_bytes.end());
-        }
-    } else {
-        throw std::runtime_error("/Contents is not a Stream or Array");
-    }
-    
-    // Parse content stream
-    foundation::content_stream::Stream content_stream = foundation::content_stream::Parse({content_bytes.data(), content_bytes.size()});
-    
-    // Process operations
+// Shared state of one page's text walk across its content and the Form
+// XObjects it draws.
+struct ExtractState {
     std::string page_text;
+    std::optional<double> last_shown_y;
+    std::vector<std::uint32_t> form_stack;  // forms being walked (cycles)
+};
+
+// M x N for PDF matrices [a b c d e f] (row-vector convention).
+std::array<double, 6> Concat(const std::array<double, 6>& m,
+                             const std::array<double, 6>& n) {
+    return {m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3],
+            m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+            m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]};
+}
+
+void ProcessContent(const std::vector<std::byte>& content_bytes,
+                    const foundation::objects::Dict& resources,
+                    const std::array<double, 6>& ctm_in, ExtractState& state,
+                    const foundation::objects::Dump& dump,
+                    std::span<const std::byte> pdf_bytes,
+                    const CryptoCtx& crypto);
+
+// `/name Do`: walk the named Form XObject (PDF §8.10) with its /Matrix on
+// top of the CTM and its own /Resources (else the caller's). Images and
+// other XObjects are skipped; so is a form already being walked (a cycle)
+// or nested deeper than 12 levels.
+void ShowFormXObject(const std::string& name,
+                     const foundation::objects::Dict& resources,
+                     const std::array<double, 6>& ctm, ExtractState& state,
+                     const foundation::objects::Dump& dump,
+                     std::span<const std::byte> pdf_bytes,
+                     const CryptoCtx& crypto) {
+    constexpr std::size_t kMaxDepth = 12;
+    if (state.form_stack.size() >= kMaxDepth) return;
+    const auto* xo_entry = FindDictEntry(resources, "XObject");
+    if (xo_entry == nullptr) return;
+    const foundation::objects::Value xo_val = ResolveValue(xo_entry->second, dump);
+    const auto* xo = std::get_if<foundation::objects::Dict>(&xo_val.v);
+    if (xo == nullptr) return;
+    const auto* entry = FindDictEntry(*xo, name);
+    if (entry == nullptr) return;
+    auto [obj_id, gen] = RefIdentity(entry->second);
+    if (obj_id != 0 &&
+        std::find(state.form_stack.begin(), state.form_stack.end(), obj_id) !=
+            state.form_stack.end())
+        return;
+    const foundation::objects::Value val = ResolveValue(entry->second, dump);
+    const auto* stream = std::get_if<foundation::objects::Stream>(&val.v);
+    if (stream == nullptr) return;
+    const auto* sub = FindDictEntry(stream->header, "Subtype");
+    const auto* sub_name =
+        sub ? std::get_if<std::string>(&sub->second.v) : nullptr;
+    if (sub_name == nullptr || *sub_name != "Form") return;
+
+    std::array<double, 6> form_ctm = ctm;
+    if (const auto* me = FindDictEntry(stream->header, "Matrix")) {
+        const foundation::objects::Value mv = ResolveValue(me->second, dump);
+        if (const auto* ma = std::get_if<foundation::objects::Array>(&mv.v);
+                ma != nullptr && ma->items.size() == 6) {
+            std::array<double, 6> m{};
+            for (int i = 0; i < 6; ++i) {
+                const auto& it = ma->items[static_cast<std::size_t>(i)].v;
+                if (const auto* d = std::get_if<double>(&it)) m[i] = *d;
+                else if (const auto* n = std::get_if<std::int64_t>(&it))
+                    m[i] = static_cast<double>(*n);
+            }
+            form_ctm = Concat(m, ctm);
+        }
+    }
+    foundation::objects::Dict form_resources = resources;
+    if (const auto* re = FindDictEntry(stream->header, "Resources")) {
+        const foundation::objects::Value rv = ResolveValue(re->second, dump);
+        if (const auto* rd = std::get_if<foundation::objects::Dict>(&rv.v))
+            form_resources = *rd;
+    }
+    std::vector<std::byte> bytes;
+    try {
+        bytes = ResolveStreamBytes(*stream, dump, pdf_bytes, crypto, obj_id, gen);
+    } catch (...) {
+        return;  // an unreadable form contributes no text
+    }
+    state.form_stack.push_back(obj_id);
+    ProcessContent(bytes, form_resources, form_ctm, state, dump, pdf_bytes,
+                   crypto);
+    state.form_stack.pop_back();
+}
+
+// Walk one content stream, appending its text to `state`.
+void ProcessContent(const std::vector<std::byte>& content_bytes,
+                    const foundation::objects::Dict& resources,
+                    const std::array<double, 6>& ctm_in, ExtractState& state,
+                    const foundation::objects::Dump& dump,
+                    std::span<const std::byte> pdf_bytes,
+                    const CryptoCtx& crypto) {
+    foundation::content_stream::Stream content_stream =
+        foundation::content_stream::Parse({content_bytes.data(), content_bytes.size()});
+    std::string& page_text = state.page_text;
+    std::optional<double>& last_shown_y = state.last_shown_y;
     std::optional<std::string> current_font_name;
     std::optional<foundation::to_unicode::ToUnicode> current_cmap;
     std::optional<FontEncoding> current_encoding;
@@ -551,7 +600,9 @@ std::string ExtractTextFromPage(
     double tm[6]  = {1, 0, 0, 1, 0, 0};
     double tlm[6] = {1, 0, 0, 1, 0, 0};
     double leading = 0.0;
-    std::optional<double> last_shown_y;
+    // Current transformation matrix with its q/Q stack (PDF §8.4.4).
+    std::array<double, 6> ctm = ctm_in;
+    std::vector<std::array<double, 6>> ctm_stack;
 
     auto num = [](const foundation::objects::Value& v) -> double {
         if (std::holds_alternative<double>(v.v)) {
@@ -579,7 +630,8 @@ std::string ExtractTextFromPage(
     // origin moved since the last shown fragment; then record the
     // current y. Same-y fragments join with no separator.
     auto break_if_new_line = [&]() {
-        const double y = tm[5];
+        // Baseline origin in page space: text matrix origin through the CTM.
+        const double y = tm[4] * ctm[1] + tm[5] * ctm[3] + ctm[5];
         if (last_shown_y && std::abs(y - *last_shown_y) > 1e-3) {
             if (!page_text.empty() && page_text.back() != '\n') {
                 page_text.push_back('\n');
@@ -677,9 +729,80 @@ std::string ExtractTextFromPage(
                     any_text = true;
                 }
             }
+        } else if (op.op == "q") {
+            ctm_stack.push_back(ctm);
+        } else if (op.op == "Q") {
+            if (!ctm_stack.empty()) {
+                ctm = ctm_stack.back();
+                ctm_stack.pop_back();
+            }
+        } else if (op.op == "cm") {
+            if (op.operands.size() >= 6) {
+                std::array<double, 6> m{};
+                for (int i = 0; i < 6; ++i) m[i] = num(op.operands[i]);
+                ctm = Concat(m, ctm);
+            }
+        } else if (op.op == "Do") {
+            if (op.operands.empty() ||
+                !std::holds_alternative<std::string>(op.operands[0].v))
+                continue;
+            ShowFormXObject(std::get<std::string>(op.operands[0].v),
+                            resources, ctm, state, dump, pdf_bytes, crypto);
         }
         // Other operators are ignored
     }
+}
+
+std::string ExtractTextFromPage(
+        const foundation::objects::Dict& page_dict,
+        const foundation::objects::Dump& dump,
+        std::span<const std::byte> pdf_bytes,
+        const CryptoCtx& crypto) {
+    // Get /Resources
+    foundation::objects::Dict resources = ResolveResources(page_dict, dump);
+
+    // Get /Contents
+    const auto* contents_entry = FindDictEntry(page_dict, "Contents");
+    if (!contents_entry) {
+        return ""; // No content stream
+    }
+
+    // Capture the Ref identity BEFORE resolution so the single-
+    // Stream branch can pass the right per-object key to the
+    // decryptor. The Array branch captures per-item identity in
+    // the loop below.
+    auto [contents_obj_id, contents_gen] = RefIdentity(contents_entry->second);
+    foundation::objects::Value contents_val = ResolveValue(contents_entry->second, dump);
+
+    std::vector<std::byte> content_bytes;
+
+    if (std::holds_alternative<foundation::objects::Stream>(contents_val.v)) {
+        const foundation::objects::Stream& stream = std::get<foundation::objects::Stream>(contents_val.v);
+        content_bytes = ResolveStreamBytes(
+            stream, dump, pdf_bytes, crypto,
+            contents_obj_id, contents_gen);
+    } else if (std::holds_alternative<foundation::objects::Array>(contents_val.v)) {
+        const foundation::objects::Array& arr = std::get<foundation::objects::Array>(contents_val.v);
+        for (const auto& item : arr.items) {
+            auto [item_obj_id, item_gen] = RefIdentity(item);
+            foundation::objects::Value resolved = ResolveValue(item, dump);
+            if (!std::holds_alternative<foundation::objects::Stream>(resolved.v)) {
+                throw std::runtime_error("/Contents array contains non-Stream value");
+            }
+            const foundation::objects::Stream& stream = std::get<foundation::objects::Stream>(resolved.v);
+            std::vector<std::byte> stream_bytes = ResolveStreamBytes(
+                stream, dump, pdf_bytes, crypto,
+                item_obj_id, item_gen);
+            content_bytes.insert(content_bytes.end(), stream_bytes.begin(), stream_bytes.end());
+        }
+    } else {
+        throw std::runtime_error("/Contents is not a Stream or Array");
+    }
+    
+    ExtractState state;
+    ProcessContent(content_bytes, resources, {1, 0, 0, 1, 0, 0}, state, dump,
+                   pdf_bytes, crypto);
+    std::string page_text = std::move(state.page_text);
     
     // Strip trailing whitespace
     while (!page_text.empty() && (page_text.back() == ' ' || page_text.back() == '\t' || page_text.back() == '\n' || page_text.back() == '\r')) {
