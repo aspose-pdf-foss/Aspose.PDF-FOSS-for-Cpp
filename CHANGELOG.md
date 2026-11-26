@@ -125,6 +125,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- `Page::Annotations()` now includes Line, Ink, Polygon, PolyLine, FreeText and FileAttachment
+  annotations read from a file (with their end points, ink strokes, vertices, attached file
+  name); they used to be left out of the collection.
 - Edits to annotations loaded from a file — contents, author (`Title`), subject, colour, a text
   annotation's open state — are now saved; they used to be dropped because loaded annotations
   were never rewritten. Loading reads those properties, and new annotations now write their

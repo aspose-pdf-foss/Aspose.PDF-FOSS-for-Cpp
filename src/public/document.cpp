@@ -31,6 +31,11 @@
 #include <aspose/pdf/annotations/text_annotation.hpp>
 #include <aspose/pdf/annotations/underline_annotation.hpp>
 #include <aspose/pdf/annotations/line_annotation.hpp>
+#include <aspose/pdf/file_specification.hpp>
+#include <aspose/pdf/annotations/default_appearance.hpp>
+#include <aspose/pdf/annotations/file_attachment_annotation.hpp>
+#include <aspose/pdf/annotations/polyline_annotation.hpp>
+#include <aspose/pdf/annotations/polygon_annotation.hpp>
 #include <aspose/pdf/annotations/ink_annotation.hpp>
 #include <aspose/pdf/annotations/free_text_annotation.hpp>
 #include <aspose/pdf/annotations/watermark_annotation.hpp>
@@ -8529,6 +8534,22 @@ void Document::LoadAcroFormFields(Aspose::Pdf::Forms::Form& form) {
     form.loaded_count_ = form.owned_fields_.size();
 }
 
+namespace {
+
+// The numbers of an array value (empty when not an array).
+std::vector<double> AnnotNumbers(const foundation::objects::Value* v) {
+    std::vector<double> out;
+    const auto* a = v ? std::get_if<foundation::objects::Array>(&v->v) : nullptr;
+    if (a == nullptr) return out;
+    for (const auto& it : a->items) {
+        if (const auto* d = std::get_if<double>(&it.v)) out.push_back(*d);
+        else if (const auto* i = std::get_if<std::int64_t>(&it.v)) out.push_back(static_cast<double>(*i));
+    }
+    return out;
+}
+
+}  // namespace
+
 void Document::LoadPageAnnotations(
         std::size_t leaf,
         Aspose::Pdf::Annotations::AnnotationCollection& coll,
@@ -8612,8 +8633,51 @@ void Document::LoadPageAnnotations(
             annot = std::make_unique<A::WatermarkAnnotation>(page, rect);
         else if (subtype == "Redact")
             annot = std::make_unique<A::RedactionAnnotation>(page, rect);
-        else
-            continue;  // out-of-v1-scope subtype — preserved on disk
+        else if (subtype == "Line") {
+            const auto l = AnnotNumbers(DictGet(*adict, "L"));
+            annot = std::make_unique<A::LineAnnotation>(
+                page, rect,
+                Aspose::Pdf::Point(l.size() == 4 ? l[0] : rect.LLX(), l.size() == 4 ? l[1] : rect.LLY()),
+                Aspose::Pdf::Point(l.size() == 4 ? l[2] : rect.URX(), l.size() == 4 ? l[3] : rect.URY()));
+        } else if (subtype == "Ink") {
+            A::InkAnnotation::StrokeList strokes;
+            if (const auto* iv = DictGet(*adict, "InkList"))
+                if (const auto* ia = std::get_if<foundation::objects::Array>(&iv->v))
+                    for (const auto& stroke : ia->items) {
+                        const auto pts = AnnotNumbers(&stroke);
+                        A::InkAnnotation::Stroke st;
+                        for (std::size_t k = 0; k + 1 < pts.size(); k += 2)
+                            st.emplace_back(pts[k], pts[k + 1]);
+                        strokes.push_back(std::move(st));
+                    }
+            annot = std::make_unique<A::InkAnnotation>(page, rect, std::move(strokes));
+        } else if (subtype == "Polygon" || subtype == "PolyLine") {
+            const auto v = AnnotNumbers(DictGet(*adict, "Vertices"));
+            std::vector<Aspose::Pdf::Point> pts;
+            for (std::size_t k = 0; k + 1 < v.size(); k += 2) pts.emplace_back(v[k], v[k + 1]);
+            if (subtype == "Polygon")
+                annot = std::make_unique<A::PolygonAnnotation>(page, rect, std::move(pts));
+            else
+                annot = std::make_unique<A::PolylineAnnotation>(page, rect, std::move(pts));
+        } else if (subtype == "FreeText") {
+            annot = std::make_unique<A::FreeTextAnnotation>(page, rect, A::DefaultAppearance());
+        } else if (subtype == "FileAttachment") {
+            std::string name;
+            if (const auto* fs = DictGet(*adict, "FS")) {
+                const foundation::objects::Value* fsv = fs;
+                if (const auto* r = std::get_if<foundation::objects::Ref>(&fs->v))
+                    if (const auto* o = FindObject(dump, r->id)) fsv = &o->value;
+                if (const auto* fd = std::get_if<foundation::objects::Dict>(&fsv->v)) {
+                    name = ReadStrOrName(DictGet(*fd, "UF"));
+                    if (name.empty()) name = ReadStrOrName(DictGet(*fd, "F"));
+                } else {
+                    name = ReadStrOrName(fs);
+                }
+            }
+            annot = std::make_unique<A::FileAttachmentAnnotation>(
+                page, rect, Aspose::Pdf::FileSpecification(name));
+        } else
+            continue;  // out-of-scope subtype — preserved on disk
 
         A::Annotation* raw = annot.get();
         if (!contents.empty()) raw->Contents(contents);
