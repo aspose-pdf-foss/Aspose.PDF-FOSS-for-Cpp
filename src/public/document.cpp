@@ -3342,6 +3342,7 @@ foundation::objects::Value PageNameValue(const char* name) {
 std::size_t Document::AddPageInternal(int insertAt1Based, bool copy,
                                       std::size_t srcLeaf, double width,
                                       double height) {
+    FlattenPageTreeInternal();
     auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
     auto trailer_bundle = foundation::trailer::Parse(span);
     auto dump = foundation::objects::Parse(span);
@@ -3518,6 +3519,7 @@ void Document::ShiftStagedPageState(std::size_t pos, std::size_t count) {
 }
 
 void Document::DeletePagesInternal(std::vector<int> pageNumbers1Based) {
+    FlattenPageTreeInternal();
     auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
     auto trailer_bundle = foundation::trailer::Parse(span);
     auto dump = foundation::objects::Parse(span);
@@ -3650,6 +3652,7 @@ std::size_t Document::ImportPagesFrom(const Document& src,
                                       int insertAt1Based) {
     const std::size_t none = tree_ ? tree_->leaves.size() : 0;
     if (!tree_ || !src.tree_) return none;
+    FlattenPageTreeInternal();
 
     auto dspan = std::span<const std::byte>(bytes_.data(), bytes_.size());
     auto dtrailer = foundation::trailer::Parse(dspan);
@@ -12958,6 +12961,55 @@ void Document::TransformPageContentInternal(
     tree_ = std::make_unique<foundation::pages_tree::Tree>(
         foundation::pages_tree::Parse(
             std::span<const std::byte>(bytes_.data(), bytes_.size())));
+}
+
+}  // namespace Aspose::Pdf
+
+namespace Aspose::Pdf {
+
+void Document::FlattenPageTreeInternal() {
+    namespace fo = foundation::objects;
+    if (!tree_) return;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto tr = foundation::trailer::Parse(span);
+    const fo::Dump dump = fo::Parse(span);
+    const std::uint32_t root_id = FindPagesRootId(dump, tr.root_id);
+    const auto* root_obj = root_id ? FindObject(dump, root_id) : nullptr;
+    const auto* root = root_obj ? std::get_if<fo::Dict>(&root_obj->value.v) : nullptr;
+    if (root == nullptr) return;
+    // Already flat: the root's /Kids are exactly the leaves, in order.
+    if (const auto* kv = DictGet(*root, "Kids"))
+        if (const auto* ka = std::get_if<fo::Array>(&kv->v); ka && ka->items.size() == tree_->leaves.size()) {
+            bool flat = true;
+            for (std::size_t i = 0; i < ka->items.size() && flat; ++i) {
+                const auto* r = std::get_if<fo::Ref>(&ka->items[i].v);
+                flat = r != nullptr && r->id == tree_->leaves[i].id;
+            }
+            if (flat) return;
+        }
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    fo::Array kids;
+    for (const auto& leaf : tree_->leaves) {
+        const auto* po = FindObject(dump, leaf.id);
+        const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+        if (pd == nullptr) continue;
+        fo::Dict page = *pd;
+        // Attributes inherited from intermediate nodes move onto the page.
+        for (const char* key : {"Resources", "MediaBox", "CropBox", "Rotate"})
+            if (DictGet(page, key) == nullptr)
+                if (const auto* v = InheritedPageAttr(*pd, dump, key)) page.entries.emplace_back(key, *v);
+        SetDictKey(page, "Parent", fo::Value(fo::Ref{root_id, 0}));
+        dirty.push_back({leaf.id, po->generation, fo::Value(std::move(page))});
+        kids.items.push_back(fo::Value(fo::Ref{leaf.id, 0}));
+    }
+    fo::Dict new_root = *root;
+    SetDictKey(new_root, "Count", fo::Value(static_cast<std::int64_t>(kids.items.size())));
+    SetDictKey(new_root, "Kids", fo::Value(std::move(kids)));
+    dirty.push_back({root_id, root_obj->generation, fo::Value(std::move(new_root))});
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(dirty.data(), dirty.size()));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(std::span<const std::byte>(bytes_.data(), bytes_.size())));
 }
 
 }  // namespace Aspose::Pdf

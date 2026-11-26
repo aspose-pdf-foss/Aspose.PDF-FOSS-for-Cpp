@@ -125,6 +125,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- Adding, deleting and importing pages (`PageCollection`, `PdfFileEditor`) now works on documents
+  with a nested `/Pages` tree: it is flattened first, with inherited resources, boxes and
+  rotation pinned on each page. These operations used to throw for such files.
 - `Page::Annotations()` now includes Line, Ink, Polygon, PolyLine, FreeText and FileAttachment
   annotations read from a file (with their end points, ink strokes, vertices, attached file
   name); they used to be left out of the collection.

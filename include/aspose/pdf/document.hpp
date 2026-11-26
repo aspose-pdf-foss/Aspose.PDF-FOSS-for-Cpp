@@ -710,6 +710,10 @@ private:
     void TransformPageContentInternal(
         int page, const std::array<double, 6>& cm, double new_width,
         double new_height, const std::array<double, 4>* clip = nullptr);
+    // Rewrite a nested /Pages tree as one level (every page a kid of the
+    // root, inherited attributes pinned on the pages) so page mutations can
+    // work on it. No-op for a flat tree.
+    void FlattenPageTreeInternal();
     // Width and height of page `page` as displayed (/Rotate applied).
     std::array<double, 2> PageDisplaySizeInternal(int page) const;
     // Set page `page`'s presentation entries: a /Trans transition of
