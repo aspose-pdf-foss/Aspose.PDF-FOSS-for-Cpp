@@ -18,10 +18,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   certificate the bundled test key is used, as before.
 - Signature verification: `PdfFileSignature::VerifySignature` / `VerifySigned` and
   `Signature::Verify` (on a loaded document's signature field) check the digest of the signed byte
-  ranges and the RSA PKCS#1 v1.5 or ECDSA signature (`adbe.pkcs7.detached`,
-  `ETSI.CAdES.detached`, `adbe.pkcs7.sha1`). They return false for a modified document.
-  Certificate trust and revocation are not checked. RSA-PSS signatures are not supported yet and
-  also return false.
+  ranges and the RSA (PKCS#1 v1.5 or RSASSA-PSS with MGF1) or ECDSA signature
+  (`adbe.pkcs7.detached`, `ETSI.CAdES.detached`, `adbe.pkcs7.sha1`). They return false for a
+  modified document. Certificate trust and revocation are not checked.
 - `Certify` writes a DocMDP certification (`/Reference` transform with the chosen access
   permissions, catalog `/Perms /DocMDP`); `GetAccessPermissions` and `IsCertified` read it from
   loaded documents.

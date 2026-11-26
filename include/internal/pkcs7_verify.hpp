@@ -5,7 +5,7 @@
 // (RFC 5652) over its content: the signer's certificate is found by its
 // issuer and serial number (or tried in turn), the content digest
 // (SHA-1/256/384/512) must equal the signed messageDigest attribute, and the
-// RSA PKCS#1 v1.5 or ECDSA (P-256/384/521) signature over the signed
+// RSA PKCS#1 v1.5, RSASSA-PSS (MGF1) or ECDSA (P-256/384/521) signature over the signed
 // attributes must verify with the certificate's public key. Certificate
 // trust and revocation are NOT
 // checked. Also accepts adbe.pkcs7.sha1 (the SHA-1 of the content as

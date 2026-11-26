@@ -54,6 +54,85 @@ bool RsaVerify(const der::Certificate& cert, std::span<const std::byte> message,
     }
 }
 
+// MGF1 (RFC 8017 B.2.1).
+Bytes Mgf1(crypto::Hash h, std::span<const std::byte> seed, std::size_t len) {
+    Bytes out;
+    for (std::uint32_t counter = 0; out.size() < len; ++counter) {
+        Bytes block(seed.begin(), seed.end());
+        for (int shift = 24; shift >= 0; shift -= 8)
+            block.push_back(static_cast<std::byte>((counter >> shift) & 0xFF));
+        const Bytes d = crypto::HashOf(h, block);
+        out.insert(out.end(), d.begin(), d.end());
+    }
+    out.resize(len);
+    return out;
+}
+
+struct PssParams {
+    crypto::Hash hash = crypto::Hash::Sha1;
+    crypto::Hash mgf_hash = crypto::Hash::Sha1;
+    std::size_t salt_len = 20;
+};
+
+// RSASSA-PSS-params (RFC 8017 A.2.3); every field has a default.
+bool ParsePssParams(const std::vector<Node>& sig_alg, PssParams& p) {
+    if (sig_alg.size() < 2 || sig_alg[1].tag != 0x30) return true;  // all defaults
+    for (const Node& f : Children(sig_alg[1])) {
+        const Node inner = der::ReadOne(f.content);  // [n] EXPLICIT
+        if (f.tag == 0xA0) {
+            if (!HashForDigestOid(Oid(Children(inner).at(0)), p.hash)) return false;
+        } else if (f.tag == 0xA1) {
+            const auto mgf = Children(inner);
+            if (Oid(mgf.at(0)) != "1.2.840.113549.1.1.8") return false;  // MGF1 only
+            if (!HashForDigestOid(Oid(Children(mgf.at(1)).at(0)), p.mgf_hash)) return false;
+        } else if (f.tag == 0xA2) {
+            p.salt_len = static_cast<std::size_t>(der::SmallInteger(inner));
+        } else if (f.tag == 0xA3) {
+            if (der::SmallInteger(inner) != 1) return false;  // trailer 0xBC only
+        }
+    }
+    return true;
+}
+
+// RSASSA-PSS verification (RFC 8017 §8.1.2 / EMSA-PSS-VERIFY §9.1.2).
+bool RsaPssVerify(const der::Certificate& cert, std::span<const std::byte> message,
+                  std::span<const std::byte> signature, const PssParams& p) {
+    if (cert.modulus.empty()) return false;
+    using bigint::BigUint;
+    const BigUint n = BigUint::FromBytesBE(cert.modulus);
+    const std::size_t mod_bits = n.BitLength();
+    const std::size_t k = (mod_bits + 7) / 8;
+    if (signature.size() != k) return false;
+    const BigUint s = BigUint::FromBytesBE(signature);
+    if (Compare(s, n) >= 0) return false;
+    const std::size_t em_bits = mod_bits - 1;
+    const std::size_t em_len = (em_bits + 7) / 8;
+    Bytes em = s.ModPow(BigUint::FromBytesBE(cert.exponent), n).ToBytesBE(k);
+    if (em_len < k) {  // the top octet must be zero
+        if (em[0] != std::byte{0}) return false;
+        em.erase(em.begin());
+    }
+    const Bytes m_hash = crypto::HashOf(p.hash, message);
+    const std::size_t h_len = m_hash.size();
+    if (em_len < h_len + p.salt_len + 2 || em.back() != std::byte{0xBC}) return false;
+    const std::size_t db_len = em_len - h_len - 1;
+    const std::span<const std::byte> masked_db(em.data(), db_len);
+    const std::span<const std::byte> hh(em.data() + db_len, h_len);
+    const unsigned top_mask = 0xFFu >> (8 * em_len - em_bits);
+    if ((std::to_integer<unsigned>(masked_db[0]) & ~top_mask & 0xFFu) != 0) return false;
+    Bytes db = Mgf1(p.mgf_hash, hh, db_len);
+    for (std::size_t i = 0; i < db_len; ++i) db[i] ^= masked_db[i];
+    db[0] = static_cast<std::byte>(std::to_integer<unsigned>(db[0]) & top_mask);
+    const std::size_t ps_len = em_len - h_len - p.salt_len - 2;
+    for (std::size_t i = 0; i < ps_len; ++i)
+        if (db[i] != std::byte{0}) return false;
+    if (db[ps_len] != std::byte{0x01}) return false;
+    Bytes m_prime(8, std::byte{0});
+    m_prime.insert(m_prime.end(), m_hash.begin(), m_hash.end());
+    m_prime.insert(m_prime.end(), db.end() - static_cast<std::ptrdiff_t>(p.salt_len), db.end());
+    return crypto::HashOf(p.hash, m_prime) == Bytes(hh.begin(), hh.end());
+}
+
 }  // namespace
 
 Verification VerifyDetached(std::span<const std::byte> cms,
@@ -94,12 +173,15 @@ Verification VerifyDetached(std::span<const std::byte> cms,
         const Node* attrs = si[3].tag == 0xA0 ? &si[3] : nullptr;
         const Node& sig_alg = si[attrs ? 4 : 3];
         const Node& signature = si[attrs ? 5 : 4];
-        const std::string sig_oid = Oid(Children(sig_alg).at(0));
-        if (sig_oid == "1.2.840.113549.1.1.10") {
-            v.error = "RSA-PSS signatures are not supported";
+        const auto sig_alg_parts = Children(sig_alg);
+        const std::string sig_oid = Oid(sig_alg_parts.at(0));
+        const bool is_pss = sig_oid == "1.2.840.113549.1.1.10";
+        PssParams pss;
+        if (is_pss && !ParsePssParams(sig_alg_parts, pss)) {
+            v.error = "unsupported RSASSA-PSS parameters";
             return v;
         }
-        const bool is_rsa = sig_oid.rfind("1.2.840.113549.1.1.", 0) == 0;
+        const bool is_rsa = !is_pss && sig_oid.rfind("1.2.840.113549.1.1.", 0) == 0;
         // ECDSA: ecdsa-with-SHA* names its hash; bare id-ecPublicKey uses
         // the digest algorithm.
         crypto::Hash ecdsa_hash = h;
@@ -109,7 +191,7 @@ Verification VerifyDetached(std::span<const std::byte> cms,
         else if (sig_oid == "1.2.840.10045.4.3.3") ecdsa_hash = crypto::Hash::Sha384;
         else if (sig_oid == "1.2.840.10045.4.3.4") ecdsa_hash = crypto::Hash::Sha512;
         else if (sig_oid != "1.2.840.10045.2.1") is_ecdsa = false;
-        if (!is_rsa && !is_ecdsa) {
+        if (!is_rsa && !is_pss && !is_ecdsa) {
             v.error = "unsupported signature algorithm " + sig_oid;
             return v;
         }
@@ -169,6 +251,8 @@ Verification VerifyDetached(std::span<const std::byte> cms,
             bool ok = false;
             if (is_rsa) {
                 ok = RsaVerify(*c, message, signature.content);
+            } else if (is_pss) {
+                ok = RsaPssVerify(*c, message, signature.content, pss);
             } else if (const ec::Curve* curve = ec::CurveByOid(c->ec_curve_oid)) {
                 ok = ec::VerifyDigest(*curve, c->ec_point,
                                       crypto::HashOf(ecdsa_hash, message),

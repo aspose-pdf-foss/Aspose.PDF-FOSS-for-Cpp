@@ -88,3 +88,24 @@ TEST(Pkcs7Verify, GarbageIsInvalid) {
     EXPECT_FALSE(v.valid);
     EXPECT_FALSE(v.error.empty());
 }
+
+// RSASSA-PSS signatures made by OpenSSL: SHA-256, SHA-384 with maximum salt,
+// and SHA-1 with every parameter defaulted (empty RSASSA-PSS-params).
+TEST(Pkcs7Verify, OpenSslRsaPssVerifies) {
+    for (const char* name :
+         {"openssl_cms_pss.der", "openssl_cms_pss_max.der", "openssl_cms_pss_sha1.der"}) {
+        const auto v =
+            foundation::pkcs7::VerifyDetached(Fixture(name), Fixture("content.bin"));
+        EXPECT_TRUE(v.valid) << name << ": " << v.error;
+        EXPECT_EQ(v.signer.subject_cn, "FOSS Test Signer") << name;
+        auto modified = Fixture("content.bin");
+        modified[2] = std::byte{'?'};
+        EXPECT_FALSE(foundation::pkcs7::VerifyDetached(Fixture(name), modified).valid)
+            << name;
+        auto tampered = Fixture(name);
+        tampered[tampered.size() - 3] ^= std::byte{0x40};  // inside the signature
+        EXPECT_FALSE(
+            foundation::pkcs7::VerifyDetached(tampered, Fixture("content.bin")).valid)
+            << name;
+    }
+}
