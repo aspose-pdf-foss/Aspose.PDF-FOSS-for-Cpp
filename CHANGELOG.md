@@ -11,6 +11,16 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `TextMarkupAnnotation::GetMarkedText`: the page text under the QuadPoints (lines separated by a
+  newline, words by a space; character extents use the text extractor's 0.5 em estimate).
+  Text-markup annotations loaded from a file now carry their QuadPoints, and the QuadPoints set
+  on a new one are written instead of its rectangle's.
+- `PrinterMarkAnnotation::AddPrinterMarks`: trim, bleed and registration marks, CMYK colour bars
+  and page information in the page margins outside the trim box, saved as `/PrinterMark`
+  annotations (`/MN`) with drawn appearances. Trim, bleed and registration mark annotations now
+  place themselves from the page's trim / bleed / media boxes; printer-mark annotations used to be
+  dropped on save.
+
 - Forms: `Form::GetFieldsInRect` (fields lying wholly inside a rectangle);
   `Form::MakeFormAnnotationsIndependent` (at Save, a page's widgets whose field also has widgets
   on other pages move into copies of the field, named `<name>0`, `<name>1`…; radio groups and
@@ -111,7 +121,6 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
   `CheckboxField::Clone` is no longer `noexcept`;
-  `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;
   `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
 
 ### Fixed

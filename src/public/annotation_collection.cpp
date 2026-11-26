@@ -78,6 +78,12 @@ bool AnnotationCollection::IsReadOnly() const noexcept {
     return false;
 }
 
+void AnnotationCollection::AddOwned(std::unique_ptr<Annotation> annotation) {
+    Annotation* raw = annotation.get();
+    owned_.push_back(std::move(annotation));
+    Add(*raw);
+}
+
 Annotation& AnnotationCollection::operator[](int index) const {
     if (index < 0 || static_cast<std::size_t>(index) >= items_.size()) {
         throw std::out_of_range(

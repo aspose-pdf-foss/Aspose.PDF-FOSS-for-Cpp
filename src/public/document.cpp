@@ -25,6 +25,9 @@
 #include <aspose/pdf/annotations/stamp_annotation.hpp>
 #include <aspose/pdf/annotations/strike_out_annotation.hpp>
 #include <aspose/pdf/annotations/markup_annotation.hpp>
+#include <aspose/pdf/annotations/color_bar_annotation.hpp>
+#include <aspose/pdf/annotations/corner_printer_mark_annotation.hpp>
+#include <aspose/pdf/annotations/registration_mark_annotation.hpp>
 #include <aspose/pdf/annotations/text_annotation.hpp>
 #include <aspose/pdf/annotations/underline_annotation.hpp>
 #include <aspose/pdf/annotations/line_annotation.hpp>
@@ -90,6 +93,7 @@
 #include "pages_tree.hpp"
 #include "pkcs7_sign.hpp"
 #include "pkcs7_verify.hpp"
+#include "xml.hpp"
 #include "png_decoder.hpp"
 #include "truetype.hpp"
 #include "pdf_writer_incremental.hpp"
@@ -105,6 +109,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <ctime>
 #include <functional>
 #include <fstream>
 #include <ios>
@@ -2219,6 +2224,11 @@ const char* PdfSubtypeName(
         case AT::Screen:          return "Screen";
         case AT::Watermark:       return "Watermark";
         case AT::Redaction:       return "Redact";  // PDF spec /Subtype name
+        case AT::TrimMark:
+        case AT::BleedMark:
+        case AT::RegistrationMark:
+        case AT::ColorBar:
+        case AT::PageInformation: return "PrinterMark";
         // v1 baseline doesn't emit printer-mark subclasses,
         // PDF3D, TrapNet, RichMedia, or Unknown — subtype-specific
         // entries (/Page /MarkStyle /etc.) needed before round-trip
@@ -2614,8 +2624,17 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                 };
                 auto quad = [&]() {
                     foundation::objects::Array a;
-                    for (double v : {llx, ury, urx, ury, llx, lly, urx, lly})
-                        push_num(a, v);
+                    const auto* tm = dynamic_cast<const AN::TextMarkupAnnotation*>(ptr);
+                    if (tm != nullptr && !tm->QuadPoints().empty() &&
+                        tm->QuadPoints().size() % 4 == 0) {
+                        for (const auto& p : tm->QuadPoints()) {
+                            push_num(a, p.X());
+                            push_num(a, p.Y());
+                        }
+                    } else {
+                        for (double v : {llx, ury, urx, ury, llx, lly, urx, lly})
+                            push_num(a, v);
+                    }
                     set_arr("QuadPoints", std::move(a));
                 };
                 std::ostringstream cs;
@@ -2801,9 +2820,135 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                         cs << ") Tj ET Q\n";
                         break;
                     }
+                    case AN::AnnotationType::TrimMark:
+                    case AN::AnnotationType::BleedMark: {
+                        // Two 1.25 pt registration-black strokes pointing at
+                        // the box corner (trim: 15 pt long, 9 pt away; bleed:
+                        // 18 pt, 3 pt).
+                        const bool trim = t == AN::AnnotationType::TrimMark;
+                        const double len = trim ? 15 : 18, off = trim ? 9 : 3;
+                        using C = AN::PrinterMarkCornerPosition;
+                        const auto* cm = dynamic_cast<const AN::CornerPrinterMarkAnnotation*>(ptr);
+                        const C pos = cm ? cm->Position() : C::TopLeft;
+                        const bool left = pos == C::TopLeft || pos == C::BottomLeft;
+                        const bool top = pos == C::TopLeft || pos == C::TopRight;
+                        // Horizontal stroke on the box's edge line, vertical one too.
+                        const double hy = top ? lly : ury;
+                        const double hx0 = left ? urx - off : llx + off;
+                        const double hx1 = left ? hx0 - len : hx0 + len;
+                        const double vx = left ? urx : llx;
+                        const double vy0 = top ? lly + off : ury - off;
+                        const double vy1 = top ? vy0 + len : vy0 - len;
+                        cs << "q 1 1 1 1 K 1.25 w " << hx0 << ' ' << hy << " m " << hx1 << ' ' << hy
+                           << " l " << vx << ' ' << vy0 << " m " << vx << ' ' << vy1 << " l S Q\n";
+                        break;
+                    }
+                    case AN::AnnotationType::RegistrationMark: {
+                        // A cross with a circle and a filled inner disc,
+                        // centred in the mark square.
+                        using S = AN::PrinterMarkSidePosition;
+                        const auto* rm = dynamic_cast<const AN::RegistrationMarkAnnotation*>(ptr);
+                        const S side = rm ? rm->Position() : S::Top;
+                        const double half = 16;
+                        const double cx = side == S::Left ? urx - half : llx + half;
+                        const double cy = side == S::Bottom ? ury - half : lly + half;
+                        auto circle = [&](double r) {
+                            const double k = 0.5523 * r;
+                            cs << (cx + r) << ' ' << cy << " m "
+                               << (cx + r) << ' ' << (cy + k) << ' ' << (cx + k) << ' ' << (cy + r) << ' ' << cx << ' ' << (cy + r) << " c "
+                               << (cx - k) << ' ' << (cy + r) << ' ' << (cx - r) << ' ' << (cy + k) << ' ' << (cx - r) << ' ' << cy << " c "
+                               << (cx - r) << ' ' << (cy - k) << ' ' << (cx - k) << ' ' << (cy - r) << ' ' << cx << ' ' << (cy - r) << " c "
+                               << (cx + k) << ' ' << (cy - r) << ' ' << (cx + r) << ' ' << (cy - k) << ' ' << (cx + r) << ' ' << cy << " c ";
+                        };
+                        cs << "q 1 1 1 1 k 1 1 1 1 K 0.25 w " << (cx - 6) << ' ' << cy << " m " << (cx + 6) << ' ' << cy
+                           << " l " << cx << ' ' << (cy - 6) << " m " << cx << ' ' << (cy + 6) << " l S ";
+                        circle(5);
+                        cs << "S ";
+                        circle(3);
+                        cs << "f Q q 0 0 0 0 K 0.25 w " << (cx - 3) << ' ' << cy << " m " << (cx + 3) << ' ' << cy
+                           << " l " << cx << ' ' << (cy - 3) << " m " << cx << ' ' << (cy + 3) << " l S Q\n";
+                        break;
+                    }
+                    case AN::AnnotationType::ColorBar: {
+                        // Seven tint steps of one process colour, labelled
+                        // when they fit.
+                        const auto* cb = dynamic_cast<const AN::ColorBarAnnotation*>(ptr);
+                        const int which = cb ? static_cast<int>(cb->ColorOfCMYK()) : 3;
+                        auto cmyk = [&](double v, const char* op) {
+                            double c[4] = {0, 0, 0, 0};
+                            c[which] = v;
+                            cs << c[0] << ' ' << c[1] << ' ' << c[2] << ' ' << c[3] << ' ' << op << ' ';
+                        };
+                        const double steps[7] = {0, 0.05, 0.25, 0.5, 0.75, 0.95, 1};
+                        const char* labels[7] = {"0", "5", "25", "50", "75", "95", "100"};
+                        const bool vertical = w < h;
+                        cs << "q 1 w ";
+                        cmyk(1, "K");
+                        cs << llx << ' ' << lly << ' ' << w << ' ' << h << " re S ";
+                        const double cell = (vertical ? h : w) / 7;
+                        for (int i = 0; i < 7; ++i) {
+                            cmyk(steps[i], "k");
+                            if (vertical) cs << llx << ' ' << (lly + i * cell) << ' ' << w << ' ' << cell << " re B ";
+                            else cs << (llx + i * cell) << ' ' << lly << ' ' << cell << ' ' << h << " re B ";
+                        }
+                        const bool labels_fit = vertical ? (w - 3 > 11.7 && cell - 3 > 6.5)
+                                                         : (cell - 3 > 11.7 && h - 3 > 6.5);
+                        if (labels_fit) {
+                            need_font = true;
+                            for (int i = 0; i < 7; ++i) {
+                                cs << "BT /Helv 7 Tf ";
+                                cmyk(steps[6 - i], "k");
+                                if (vertical) cs << (llx + 2) << ' ' << (lly + i * cell + 2);
+                                else cs << (llx + i * cell + 2) << ' ' << (lly + 2);
+                                cs << " Td (" << labels[i] << ") Tj ET ";
+                            }
+                        }
+                        cs << "Q\n";
+                        break;
+                    }
+                    case AN::AnnotationType::PageInformation: {
+                        // File name, page number, date and time.
+                        need_font = true;
+                        std::string file = std::filesystem::path(source_filename_.value_or(std::string())).filename().string();
+                        char when[32] = {};
+                        const std::time_t now = std::time(nullptr);
+                        std::tm tm_now{};
+#if defined(_WIN32)
+                        localtime_s(&tm_now, &now);
+#else
+                        localtime_r(&now, &tm_now);
+#endif
+                        std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", &tm_now);
+                        const double fs = 7;
+                        const double ty = lly + std::max(0.0, (h - fs) / 2);
+                        auto text = [&](const std::string& s, double x) {
+                            cs << "BT /Helv " << fs << " Tf " << x << ' ' << ty << " Td (";
+                            esc(s);
+                            cs << ") Tj ET ";
+                        };
+                        cs << "q 0 g ";
+                        double x = llx;
+                        if (!file.empty()) {
+                            text(file, x);
+                            x += (file.size() + 4) * fs * 0.5;
+                        }
+                        text(std::to_string(leaf_idx + 1), x);
+                        text(when, std::max(llx, urx - std::strlen(when) * fs * 0.5));
+                        cs << "Q\n";
+                        break;
+                    }
                     default:
                         has_ap = false;  // Text(sticky)/Link/FileAttachment
                         break;
+                }
+                if (std::strcmp(PdfSubtypeName(t) ? PdfSubtypeName(t) : "", "PrinterMark") == 0) {
+                    const char* mn = t == AN::AnnotationType::TrimMark ? "TrimMarks"
+                                     : t == AN::AnnotationType::BleedMark ? "BleedMarks"
+                                     : t == AN::AnnotationType::RegistrationMark ? "RegistrationTarget"
+                                     : t == AN::AnnotationType::ColorBar ? "ColorBar"
+                                                                         : "PageInformation";
+                    annot_dict->entries.emplace_back("MN", PageNameValue(mn));
+                    annot_dict->entries.emplace_back("F", foundation::objects::Value(static_cast<std::int64_t>(4 | 64)));
                 }
                 if (!has_ap && has_c)
                     set_arr("C", color_arr(ac.r_, ac.g_, ac.b_));
@@ -4953,6 +5098,53 @@ std::string LatinDecode(const foundation::objects::String& s) {
 }
 
 }  // namespace
+
+std::string Document::MarkedTextInternal(
+        std::size_t leaf, const std::vector<std::array<double, 4>>& boxes) const {
+    std::string out;
+    bool have_prev = false;
+    double prev_y = 0, prev_end = 0, prev_size = 0;
+    for (const auto& show : ScanTextShowsInternal(leaf, false)) {
+        const auto cps = foundation::xml::DecodeUtf8(show.text);
+        const double size = show.font_size > 0 ? show.font_size : 12.0;
+        const double cw = 0.5 * size;  // the extractor's per-character estimate
+        const double cy = show.y + 0.3 * size;
+        std::string run;
+        double run_start = 0, run_end = 0;
+        auto flush = [&] {
+            if (run.empty()) return;
+            if (have_prev) {
+                if (std::abs(prev_y - show.y) > prev_size / 2) out += '\n';
+                else if (run_start - prev_end > 0.2 * size) out += ' ';
+            }
+            out += run;
+            have_prev = true;
+            prev_y = show.y;
+            prev_end = run_end;
+            prev_size = size;
+            run.clear();
+        };
+        for (std::size_t i = 0; i < cps.size(); ++i) {
+            const double cx = show.x + (static_cast<double>(i) + 0.5) * cw;
+            bool in = false;
+            for (const auto& b : boxes)
+                if (cx >= b[0] && cx <= b[2] && cy >= b[1] && cy <= b[3]) in = true;
+            if (in) {
+                if (run.empty()) run_start = show.x + static_cast<double>(i) * cw;
+                foundation::xml::AppendUtf8(run, cps[i]);
+                run_end = show.x + static_cast<double>(i + 1) * cw;
+            } else {
+                flush();
+            }
+        }
+        flush();
+    }
+    // Trim the spaces a selection edge may pick up.
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    std::size_t lead = 0;
+    while (lead < out.size() && out[lead] == ' ') ++lead;
+    return out.substr(lead);
+}
 
 std::vector<Document::TextShow> Document::ScanTextShowsInternal(
         std::size_t leaf, bool allPages) const {
@@ -8452,6 +8644,18 @@ void Document::LoadPageAnnotations(
             const auto* ob = ov ? std::get_if<bool>(&ov->v) : nullptr;
             t->Open(ob != nullptr && *ob);
             props.open = t->Open();
+        }
+        if (auto* tm = dynamic_cast<A::TextMarkupAnnotation*>(raw)) {
+            if (const auto* qv = DictGet(*adict, "QuadPoints"))
+                if (const auto* qa = std::get_if<foundation::objects::Array>(&qv->v)) {
+                    auto comp = [](const foundation::objects::Value& v) {
+                        if (const auto* d = std::get_if<double>(&v.v)) return *d;
+                        if (const auto* i = std::get_if<std::int64_t>(&v.v)) return static_cast<double>(*i);
+                        return 0.0;
+                    };
+                    for (std::size_t q = 0; q + 1 < qa->items.size(); q += 2)
+                        tm->quad_points_.emplace_back(comp(qa->items[q]), comp(qa->items[q + 1]));
+                }
         }
         coll.loaded_props_[raw] = props;
         coll.loaded_ids_[raw] = ref->id;

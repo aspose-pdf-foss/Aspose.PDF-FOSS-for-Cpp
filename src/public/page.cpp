@@ -101,6 +101,8 @@ Annotations::AnnotationCollection& Page::Annotations() const {
     auto& slot = slots[leaf_index_];
     if (!slot) {
         slot = std::make_unique<Annotations::AnnotationCollection>();
+        slot->doc_ = doc_;
+        slot->leaf_ = leaf_index_;
         doc_->LoadPageAnnotations(leaf_index_, *slot,
                                   const_cast<Page&>(*this));
     }

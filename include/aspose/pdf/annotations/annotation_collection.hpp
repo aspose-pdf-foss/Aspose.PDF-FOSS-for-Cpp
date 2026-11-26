@@ -32,6 +32,11 @@ namespace Aspose::Pdf {
 class Document;
 }
 
+namespace Aspose::Pdf {
+class Document;
+class Page;
+}
+
 namespace Aspose::Pdf::Annotations {
 
 class Annotation;
@@ -117,6 +122,14 @@ private:
 
     std::vector<Annotation*> items_;
     std::vector<bool> consider_rotation_;
+    // The page this collection belongs to (set by Page::Annotations()).
+    friend class Aspose::Pdf::Page;
+    friend class TextMarkupAnnotation;
+    Aspose::Pdf::Document* doc_ = nullptr;
+    std::size_t leaf_ = 0;
+    // PrinterMarkAnnotation::AddPrinterMarks: annotations the collection owns.
+    friend class PrinterMarkAnnotation;
+    void AddOwned(std::unique_ptr<Annotation> annotation);
     // Annotations Flatten() took out of items_: Save writes them (new
     // ones) and burns them into the page.
     friend class Annotation;

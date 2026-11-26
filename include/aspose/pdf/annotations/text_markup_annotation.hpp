@@ -24,9 +24,11 @@ class TextMarkupAnnotation : public MarkupAnnotation {
 public:
     TextMarkupAnnotation() noexcept = default;
 
-    // Extract the plaintext spanned by the QuadPoints of this
-    // markup. v1 stub returns empty until text-extraction
-    // wire-through lands (separate cluster).
+    // The page text under the QuadPoints (the Rect when there are none):
+    // characters whose centre lies in a quadrilateral's box, lines
+    // separated by '\n', words by a space. Character extents use the
+    // text extractor's 0.5 em estimate. Throws std::logic_error when the
+    // annotation is not on a page.
     std::string GetMarkedText() const;
 
     const std::vector<Aspose::Pdf::Point>& QuadPoints() const noexcept;
@@ -34,6 +36,7 @@ public:
 
 private:
     std::vector<Aspose::Pdf::Point> quad_points_;
+    friend class Aspose::Pdf::Document;
 };
 
 }  // namespace Aspose::Pdf::Annotations

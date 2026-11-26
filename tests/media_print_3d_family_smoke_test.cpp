@@ -134,10 +134,9 @@ TEST(MediaPrint3DFamilySmoke, RichMediaConstructAndAccessors) {
 
 TEST(MediaPrint3DFamilySmoke, PrinterMarkBaseStaticHelpers) {
     Document doc;
-    // Printer marks are not generated yet: the helper throws.
-    EXPECT_THROW(PrinterMarkAnnotation::AddPrinterMarks(doc,
-                     PrinterMarksKind::TrimMarks),
-                 std::logic_error);
+    // An empty document has no pages to mark (see printer_marks_smoke_test).
+    PrinterMarkAnnotation::AddPrinterMarks(doc, PrinterMarksKind::TrimMarks);
+    SUCCEED();
 }
 
 TEST(MediaPrint3DFamilySmoke, PrinterMarkSubclassHeadersCompile) {

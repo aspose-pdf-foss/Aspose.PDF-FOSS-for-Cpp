@@ -69,6 +69,7 @@ class PageCollection;
 
 namespace Annotations { class AnnotationCollection; }
 namespace Annotations { class RedactionAnnotation; }
+namespace Annotations { class TextMarkupAnnotation; }
 namespace Forms { class Form; class Field; class Signature; }
 namespace Facades { class PdfFileEditor; }
 namespace Facades { class PdfBookmarkEditor; }
@@ -414,6 +415,7 @@ private:
     friend class Aspose::Pdf::Facades::PdfFileSignature;
     friend class Aspose::Pdf::Facades::PdfFileInfo;
     friend class Aspose::Pdf::Facades::PdfPageEditor;
+    friend class Aspose::Pdf::Annotations::TextMarkupAnnotation;
     friend class Aspose::Pdf::Facades::PdfContentEditor;
     friend class Aspose::Pdf::Facades::PdfExtractor;
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
@@ -831,6 +833,9 @@ private:
     // `allPages`) and return the located text shows in reading order.
     std::vector<TextShow> ScanTextShowsInternal(std::size_t leaf,
                                                 bool allPages) const;
+    // The text of page `leaf` under `boxes` (llx, lly, urx, ury each).
+    std::string MarkedTextInternal(std::size_t leaf,
+                                   const std::vector<std::array<double, 4>>& boxes) const;
 
     // A pending fragment text edit (registered by TextFragment::Text on a
     // search result; applied at Save). Replaces the `occurrence`-th

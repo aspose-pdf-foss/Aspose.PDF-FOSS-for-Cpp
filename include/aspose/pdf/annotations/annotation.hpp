@@ -130,6 +130,9 @@ protected:
     // Subclasses can set PageIndex when attached. v1 default is 0.
     void SetPageIndex(int value) noexcept;
 
+    // The collection (page) this annotation was added to, or nullptr.
+    AnnotationCollection* OwnerCollection() const noexcept { return owner_; }
+
 private:
     AnnotationFlags flags_ = AnnotationFlags::Default;
     bool update_appearance_on_convert_ = false;
