@@ -69,15 +69,28 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Changed
 
-- `Forms::Signature::Verify()` now throws `std::logic_error` instead of always returning `true`.
-  The library has no signature verification yet, so the old result reported unchecked signatures
-  as valid.
-- `PdfFileSignature::VerifySignature` and `VerifySigned` throw `std::logic_error` for a present
-  signature instead of returning `true` when it merely existed and covered the whole file. They
-  still return `false` for an unknown name or a blank signature field.
+- `Forms::Signature::Verify()` no longer always returns `true`: for a signature read from a
+  loaded document it verifies it, and for a `Signature` not bound to a signed document it throws
+  `std::logic_error`. `PdfFileSignature::VerifySignature` / `VerifySigned` no longer report a
+  signature as valid just because it exists and covers the whole file.
+- Methods that used to do nothing or return an empty value now throw `std::logic_error`
+  ("not implemented — blocked on capability '…'") so a missing feature is visible:
+  `PdfAnnotationEditor` XFDF / FDF / PDF import and `ModifyAnnotations[Author]`;
+  `PdfBookmarkEditor` XML / HTML import and export; `PdfContentEditor` attachments, document
+  actions, viewer preferences, `ReplaceImage` and stamp edits; `PdfPageEditor::MovePosition` /
+  `ApplyChanges`; `Form::MakeFormAnnotationsIndependent` / `GetFieldsInRect`;
+  `CheckboxField::AddOption` / `Clone` (no longer `noexcept`);
+  `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;
+  `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
 
 ### Fixed
 
+- `PdfFileInfo::HasOpenPassword`, `HasEditPassword` and `PasswordType` report how an encrypted
+  document was opened instead of always "no password"; `HasCollection` reads the catalog
+  `/Collection` instead of always `false`.
+- `PdfFileStamp::PageWidth` / `PageHeight` return the first page's size instead of US Letter.
+- `PdfBookmarkEditor::ExtractBookmarks(bool upperLevel)`, `(title)` and `(parent)` filter the
+  bookmarks (top level only, a titled subtree, a bookmark's children) instead of returning all.
 - Edits to form fields loaded from a file are no longer lost on save. Previously only a changed
   value was written; renaming, read-only / required / no-export, moving, multi-line, comb,
   `MaxLen`, alignment, annotation flags, option lists and `DefaultAppearance` font and size were
