@@ -216,6 +216,9 @@ set(ASPOSE_PDF_FOSS_SOURCES
   src/internal/bigint.cpp
   src/internal/pkcs7_sign.cpp
   src/internal/field_appearance.cpp
+  src/internal/crypto.cpp
+  src/internal/der.cpp
+  src/internal/pkcs12.cpp
   src/internal/rc4.cpp
   src/internal/crypt_filter.cpp
   src/internal/encrypt_parser.cpp
