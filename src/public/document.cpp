@@ -11087,3 +11087,334 @@ int Document::FieldPageNumberInternal(const Forms::Field& field) const {
 }
 
 }  // namespace Aspose::Pdf
+
+namespace Aspose::Pdf {
+
+// ===== Page layout (backs PdfFileEditor booklet / N-up / resize / margins /
+// page break) ===============================================================
+
+namespace {
+
+double LayoutNum(const foundation::objects::Value* v) {
+    if (v == nullptr) return 0.0;
+    if (const auto* d = std::get_if<double>(&v->v)) return *d;
+    if (const auto* i = std::get_if<std::int64_t>(&v->v))
+        return static_cast<double>(*i);
+    return 0.0;
+}
+
+// A page attribute, inherited through the /Pages tree (§7.7.3.4).
+const foundation::objects::Value* InheritedPageAttr(
+        const foundation::objects::Dict& page,
+        const foundation::objects::Dump& dump, const char* key) {
+    const foundation::objects::Dict* cur = &page;
+    for (int depth = 0; cur != nullptr && depth < 32; ++depth) {
+        if (const auto* v = DictGet(*cur, key)) return v;
+        const auto* pv = DictGet(*cur, "Parent");
+        const auto* pr = pv ? std::get_if<foundation::objects::Ref>(&pv->v)
+                            : nullptr;
+        const auto* po = pr ? FindObject(dump, pr->id) : nullptr;
+        cur = po ? std::get_if<foundation::objects::Dict>(&po->value.v)
+                 : nullptr;
+    }
+    return nullptr;
+}
+
+// The page's /MediaBox as [llx lly urx ury] (612 x 792 when absent).
+std::array<double, 4> PageMediaBox(const foundation::objects::Dict& page,
+                                   const foundation::objects::Dump& dump) {
+    std::array<double, 4> box{0, 0, 612, 792};
+    const auto* v = InheritedPageAttr(page, dump, "MediaBox");
+    if (v != nullptr) {
+        foundation::objects::Value resolved = *v;
+        if (const auto* r = std::get_if<foundation::objects::Ref>(&v->v))
+            if (const auto* o = FindObject(dump, r->id)) resolved = o->value;
+        if (const auto* a = std::get_if<foundation::objects::Array>(&resolved.v);
+                a != nullptr && a->items.size() == 4)
+            for (std::size_t i = 0; i < 4; ++i) box[i] = LayoutNum(&a->items[i]);
+    }
+    if (box[2] < box[0]) std::swap(box[0], box[2]);
+    if (box[3] < box[1]) std::swap(box[1], box[3]);
+    return box;
+}
+
+// The decoded bytes of the page's content streams, concatenated.
+std::vector<std::byte> PageContentBytes(const foundation::objects::Dict& page,
+                                        const foundation::objects::Dump& dump) {
+    std::vector<std::byte> out;
+    const auto* cv = DictGet(page, "Contents");
+    if (cv == nullptr) return out;
+    std::vector<foundation::objects::Value> parts;
+    foundation::objects::Value top = *cv;
+    if (const auto* r = std::get_if<foundation::objects::Ref>(&cv->v))
+        if (const auto* o = FindObject(dump, r->id)) {
+            if (std::get_if<foundation::objects::Array>(&o->value.v))
+                top = o->value;
+        }
+    if (const auto* a = std::get_if<foundation::objects::Array>(&top.v))
+        parts = a->items;
+    else
+        parts.push_back(*cv);
+    for (const auto& part : parts) {
+        const foundation::objects::Stream* st = nullptr;
+        if (const auto* r = std::get_if<foundation::objects::Ref>(&part.v))
+            if (const auto* o = FindObject(dump, r->id))
+                st = std::get_if<foundation::objects::Stream>(&o->value.v);
+        if (st == nullptr) continue;
+        const std::vector<std::byte> body = DecodeStreamBody(*st);
+        out.insert(out.end(), body.begin(), body.end());
+        out.push_back(static_cast<std::byte>('\n'));
+    }
+    return out;
+}
+
+std::string LayoutCm(const std::array<double, 6>& m) {
+    std::string s;
+    for (double v : m) s += FmtNum(v) + " ";
+    return s + "cm\n";
+}
+
+}  // namespace
+
+std::array<double, 2> Document::PageDisplaySizeInternal(int page) const {
+    if (!tree_ || page < 1 ||
+        static_cast<std::size_t>(page) > tree_->leaves.size())
+        return {0, 0};
+    const auto& leaf = tree_->leaves[static_cast<std::size_t>(page - 1)];
+    const bool sideways = leaf.rotation == 90 || leaf.rotation == 270;
+    return sideways ? std::array<double, 2>{leaf.height, leaf.width}
+                    : std::array<double, 2>{leaf.width, leaf.height};
+}
+
+void Document::ComposePagesInternal(const std::vector<ComposedPage>& pages) {
+    namespace fo = foundation::objects;
+    if (pages.empty() || !tree_) return;
+    // Blank output pages first (each Add re-parses the tree).
+    const std::size_t first_new = tree_->leaves.size();
+    for (const auto& cp : pages)
+        AddPageInternal(0, false, 0, cp.width, cp.height);
+
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto trailer_bundle = foundation::trailer::Parse(span);
+    const fo::Dump dump = fo::Parse(span);
+    std::uint32_t next_id = trailer_bundle.size;
+    for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    std::vector<std::unique_ptr<std::vector<std::byte>>> bodies;
+    auto add_stream = [&](fo::Dict header, std::vector<std::byte> body) {
+        bodies.push_back(std::make_unique<std::vector<std::byte>>(std::move(body)));
+        fo::Stream st;
+        st.header = std::move(header);
+        st.body = std::span<const std::byte>(bodies.back()->data(),
+                                             bodies.back()->size());
+        const std::uint32_t id = next_id++;
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = id; d.generation = 0; d.value.v = std::move(st);
+        dirty.push_back(std::move(d));
+        return id;
+    };
+    auto num_v = [](double x) { fo::Value v; v.v = x; return v; };
+
+    // Each source page once, as a Form XObject in its display orientation
+    // (§8.10): its content, resources and media box, rotated per /Rotate.
+    std::map<int, std::uint32_t> xobject_of;
+    auto xobject_for = [&](int page) -> std::uint32_t {
+        if (auto it = xobject_of.find(page); it != xobject_of.end())
+            return it->second;
+        const auto& leaf = tree_->leaves[static_cast<std::size_t>(page - 1)];
+        const auto* po = FindObject(dump, leaf.id);
+        const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+        if (pd == nullptr) return 0;
+        const auto box = PageMediaBox(*pd, dump);
+        const double w = box[2] - box[0], h = box[3] - box[1];
+        const double llx = box[0], lly = box[1];
+        std::array<double, 6> m{1, 0, 0, 1, -llx, -lly};
+        switch (leaf.rotation) {
+            case 90:  m = {0, -1, 1, 0, -lly, w + llx}; break;
+            case 180: m = {-1, 0, 0, -1, w + llx, h + lly}; break;
+            case 270: m = {0, 1, -1, 0, h + lly, -llx}; break;
+            default: break;
+        }
+        fo::Dict header;
+        header.entries.emplace_back("Type", PageNameValue("XObject"));
+        header.entries.emplace_back("Subtype", PageNameValue("Form"));
+        { fo::Array bb; for (double x : box) bb.items.push_back(num_v(x));
+          fo::Value v; v.v = std::move(bb); header.entries.emplace_back("BBox", std::move(v)); }
+        { fo::Array mm; for (double x : m) mm.items.push_back(num_v(x));
+          fo::Value v; v.v = std::move(mm); header.entries.emplace_back("Matrix", std::move(v)); }
+        if (const auto* res = InheritedPageAttr(*pd, dump, "Resources"))
+            header.entries.emplace_back("Resources", *res);
+        const std::uint32_t id = add_stream(std::move(header),
+                                            PageContentBytes(*pd, dump));
+        xobject_of[page] = id;
+        return id;
+    };
+
+    for (std::size_t k = 0; k < pages.size(); ++k) {
+        const auto& leaf = tree_->leaves[first_new + k];
+        const auto* po = FindObject(dump, leaf.id);
+        const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+        if (pd == nullptr) continue;
+        std::string content;
+        fo::Dict xobjects;
+        int n = 0;
+        for (const auto& item : pages[k].items) {
+            if (item.page < 1 ||
+                static_cast<std::size_t>(item.page) > first_new)
+                continue;
+            const std::uint32_t xid = xobject_for(item.page);
+            if (xid == 0) continue;
+            const std::string name = "AspPg" + std::to_string(++n);
+            content += "q\n" + LayoutCm(item.cm) + "/" + name + " Do\nQ\n";
+            fo::Value v; v.v = fo::Ref{xid, 0};
+            xobjects.entries.emplace_back(name, std::move(v));
+        }
+        fo::Dict updated = *pd;
+        EraseDictKey(updated, "Contents");
+        EraseDictKey(updated, "Resources");
+        const std::uint32_t cid = add_stream(
+            fo::Dict{}, std::vector<std::byte>(
+                            reinterpret_cast<const std::byte*>(content.data()),
+                            reinterpret_cast<const std::byte*>(content.data()) +
+                                content.size()));
+        { fo::Value v; v.v = fo::Ref{cid, 0}; updated.entries.emplace_back("Contents", std::move(v)); }
+        fo::Dict res;
+        { fo::Value v; v.v = std::move(xobjects); res.entries.emplace_back("XObject", std::move(v)); }
+        { fo::Value v; v.v = std::move(res); updated.entries.emplace_back("Resources", std::move(v)); }
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = leaf.id; d.generation = po->generation; d.value.v = std::move(updated);
+        dirty.push_back(std::move(d));
+    }
+
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+                  dirty.data(), dirty.size()));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(
+            std::span<const std::byte>(bytes_.data(), bytes_.size())));
+}
+
+void Document::TransformPageContentInternal(
+        int page, const std::array<double, 6>& cm, double new_width,
+        double new_height, const std::array<double, 4>* clip) {
+    namespace fo = foundation::objects;
+    if (!tree_ || page < 1 ||
+        static_cast<std::size_t>(page) > tree_->leaves.size())
+        return;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto trailer_bundle = foundation::trailer::Parse(span);
+    const fo::Dump dump = fo::Parse(span);
+    std::uint32_t next_id = trailer_bundle.size;
+    for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
+    const auto& leaf = tree_->leaves[static_cast<std::size_t>(page - 1)];
+    const auto* po = FindObject(dump, leaf.id);
+    const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+    if (pd == nullptr) return;
+
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    std::vector<std::unique_ptr<std::vector<std::byte>>> bodies;
+    auto add_stream = [&](const std::string& s) {
+        bodies.push_back(std::make_unique<std::vector<std::byte>>(
+            reinterpret_cast<const std::byte*>(s.data()),
+            reinterpret_cast<const std::byte*>(s.data()) + s.size()));
+        fo::Stream st;
+        st.body = std::span<const std::byte>(bodies.back()->data(),
+                                             bodies.back()->size());
+        const std::uint32_t id = next_id++;
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = id; d.generation = 0; d.value.v = std::move(st);
+        dirty.push_back(std::move(d));
+        fo::Value v; v.v = fo::Ref{id, 0};
+        return v;
+    };
+    auto num_v = [](double x) { fo::Value v; v.v = x; return v; };
+
+    // [q (clip) cm, ...old content..., Q]: the old content, isolated, drawn
+    // through `cm`, optionally clipped to `clip` (new page space).
+    std::string pre = "q\n";
+    if (clip != nullptr)
+        pre += FmtNum((*clip)[0]) + " " + FmtNum((*clip)[1]) + " " +
+               FmtNum((*clip)[2]) + " " + FmtNum((*clip)[3]) + " re W n\n";
+    pre += LayoutCm(cm);
+    fo::Array contents;
+    contents.items.push_back(add_stream(pre));
+    if (const auto* cv = DictGet(*pd, "Contents")) {
+        fo::Value top = *cv;
+        if (const auto* r = std::get_if<fo::Ref>(&cv->v))
+            if (const auto* o = FindObject(dump, r->id))
+                if (std::get_if<fo::Array>(&o->value.v)) top = o->value;
+        if (const auto* a = std::get_if<fo::Array>(&top.v))
+            for (const auto& it : a->items) contents.items.push_back(it);
+        else
+            contents.items.push_back(*cv);
+    }
+    contents.items.push_back(add_stream("Q\n"));
+
+    fo::Dict updated = *pd;
+    // Resources may be inherited: pin them on the page before it changes.
+    if (DictGet(updated, "Resources") == nullptr)
+        if (const auto* res = InheritedPageAttr(*pd, dump, "Resources"))
+            updated.entries.emplace_back("Resources", *res);
+    for (const char* key : {"Contents", "MediaBox", "CropBox", "BleedBox",
+                            "TrimBox", "ArtBox"})
+        EraseDictKey(updated, key);
+    { fo::Value v; v.v = std::move(contents); updated.entries.emplace_back("Contents", std::move(v)); }
+    { fo::Array mb; for (double x : {0.0, 0.0, new_width, new_height}) mb.items.push_back(num_v(x));
+      fo::Value v; v.v = std::move(mb); updated.entries.emplace_back("MediaBox", std::move(v)); }
+
+    // Annotation rectangles move with the content.
+    auto transform_rect = [&](fo::Dict& ad) {
+        const auto* rv = DictGet(ad, "Rect");
+        const auto* ra = rv ? std::get_if<fo::Array>(&rv->v) : nullptr;
+        if (ra == nullptr || ra->items.size() != 4) return;
+        double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+        for (int cx : {0, 2})
+            for (int cy : {1, 3}) {
+                const double x = LayoutNum(&ra->items[static_cast<std::size_t>(cx)]);
+                const double y = LayoutNum(&ra->items[static_cast<std::size_t>(cy)]);
+                const double px = cm[0] * x + cm[2] * y + cm[4];
+                const double py = cm[1] * x + cm[3] * y + cm[5];
+                x0 = std::min(x0, px); x1 = std::max(x1, px);
+                y0 = std::min(y0, py); y1 = std::max(y1, py);
+            }
+        fo::Array nr;
+        for (double x : {x0, y0, x1, y1}) nr.items.push_back(num_v(x));
+        fo::Value v; v.v = std::move(nr);
+        SetDictKey(ad, "Rect", std::move(v));
+    };
+    fo::Array annots = PageAnnotsArray(*pd, dump);
+    bool annots_inline_changed = false;
+    for (auto& item : annots.items) {
+        if (auto* inline_d = std::get_if<fo::Dict>(&item.v)) {
+            transform_rect(*inline_d);
+            annots_inline_changed = true;
+            continue;
+        }
+        const auto* r = std::get_if<fo::Ref>(&item.v);
+        const auto* ao = r ? FindObject(dump, r->id) : nullptr;
+        const auto* ad = ao ? std::get_if<fo::Dict>(&ao->value.v) : nullptr;
+        if (ad == nullptr) continue;
+        fo::Dict copy = *ad;
+        transform_rect(copy);
+        foundation::pdf_writer_incremental::DirtyObject d;
+        d.id = r->id; d.generation = ao->generation; d.value.v = std::move(copy);
+        dirty.push_back(std::move(d));
+    }
+    if (annots_inline_changed) {
+        EraseDictKey(updated, "Annots");
+        fo::Value v; v.v = std::move(annots);
+        updated.entries.emplace_back("Annots", std::move(v));
+    }
+
+    foundation::pdf_writer_incremental::DirtyObject d;
+    d.id = leaf.id; d.generation = po->generation; d.value.v = std::move(updated);
+    dirty.push_back(std::move(d));
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+                  dirty.data(), dirty.size()));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(
+            std::span<const std::byte>(bytes_.data(), bytes_.size())));
+}
+
+}  // namespace Aspose::Pdf

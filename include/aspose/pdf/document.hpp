@@ -630,6 +630,33 @@ private:
                                 const std::vector<int>& srcPages1Based,
                                 int insertAt1Based);
 
+    // ---- Page layout (backs PdfFileEditor booklet / N-up / resize /
+    // margins / page break) ----
+    // One page of this document drawn through `cm` (its display space,
+    // origin bottom-left, maps to the target page).
+    struct PagePlacement {
+        int page = 0;  // 1-based
+        std::array<double, 6> cm{1, 0, 0, 1, 0, 0};
+    };
+    struct ComposedPage {
+        double width = 0;
+        double height = 0;
+        std::vector<PagePlacement> items;
+    };
+    // Append `pages` after the existing ones; each draws the listed pages
+    // of this document as Form XObjects (content, resources, media box,
+    // /Rotate applied). Annotations of the drawn pages are not carried.
+    void ComposePagesInternal(const std::vector<ComposedPage>& pages);
+    // Redraw page `page`'s content through `cm` (wrapped in q/Q, clipped to
+    // `clip` = x, y, w, h in the new page space when given), set its media
+    // box to [0 0 new_width new_height] (crop / bleed / trim / art boxes
+    // dropped) and move its annotation rectangles with the content.
+    void TransformPageContentInternal(
+        int page, const std::array<double, 6>& cm, double new_width,
+        double new_height, const std::array<double, 4>* clip = nullptr);
+    // Width and height of page `page` as displayed (/Rotate applied).
+    std::array<double, 2> PageDisplaySizeInternal(int page) const;
+
     // ---- Document outline (/Outlines) — backs PdfBookmarkEditor ----
     // Stage the full outline tree for the next Save (replaces any
     // existing /Outlines). Empty + cleared=true removes /Outlines.

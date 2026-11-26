@@ -100,6 +100,8 @@ public:
 
         double Value() const noexcept;
         bool IsPercent() const noexcept;
+        // True for Auto(): the value is derived from the other ones.
+        bool IsAuto() const noexcept;
 
     private:
         double value_ = 0.0;
@@ -274,6 +276,9 @@ public:
                        const std::vector<int>& pages,
                        double leftMarginPct, double rightMarginPct,
                        double topMarginPct, double bottomMarginPct);
+    // Split pages: each PageBreak(page, position) cuts that page at height
+    // `position` (PDF units from the bottom). The part above stays on the
+    // page; the part below moves to a new page right after it, at its top.
     bool AddPageBreak(const std::string& inputFile,
                       const std::string& outputFile,
                       const std::vector<PageBreak>& pageBreaks);
@@ -346,6 +351,23 @@ public:
     void UseDiskBuffer(bool value) noexcept;
 
 private:
+    // Layout workers (throw on failure; RunEditor maps to bool).
+    static void DoMakeBooklet(const std::string& input,
+                              const std::string& output,
+                              const Aspose::Pdf::PageSize* size);
+    static void DoMakeNUp(const std::vector<std::string>& inputs,
+                          const std::string& output, bool sidewise);
+    static void DoAddMargins(const std::string& input,
+                             const std::string& output,
+                             const std::vector<int>& pages, double l,
+                             double r, double t, double b, bool percent);
+    static void DoResize(const std::string& input, const std::string& output,
+                         const std::vector<int>& pages,
+                         const ContentsResizeParameters& params);
+    static void DoAddPageBreak(const std::string& input,
+                               const std::string& output,
+                               const std::vector<PageBreak>& pageBreaks);
+
     // Throwing / Try* shared cores (isTry suppresses rethrow).
     bool ConcatenateTwo(const std::string& firstInputFile,
                         const std::string& secondInputFile,
