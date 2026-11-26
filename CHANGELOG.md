@@ -11,6 +11,13 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `RichMediaAnnotation` embeds video or audio: `SetContent(name, bytes)`, `SetPoster(png/jpeg)`,
+  `CustomPlayer(swf)`, `AddCustomData`; Save writes `/RichMediaContent` (assets, configuration,
+  instance) and `/RichMediaSettings` (activation on click / page open / page visible) with the
+  poster, or a frame with a play triangle, as appearance. Without a player the instance plays the
+  media directly. `Update()` checks that content is set. RichMedia annotations used to be dropped
+  on save; an annotation type that cannot be saved now throws instead of disappearing.
+
 - `TiffDevice` writes `CompressionType::CCITT3` (T.4, one-dimensional) and `CCITT4` (T.6) TIFFs:
   bi-level WhiteIsZero pages, whatever the colour depth setting — these used to throw. The TIFF
   reader now decodes CCITT (Modified Huffman, Group 3, Group 4) in WhiteIsZero and BlackIsZero
@@ -125,8 +132,7 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   signature as valid just because it exists and covers the whole file.
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
-  `CheckboxField::Clone` is no longer `noexcept`;
-  `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
+  `CheckboxField::Clone` is no longer `noexcept`. `grep PENDING src` lists the rest.
 
 ### Fixed
 

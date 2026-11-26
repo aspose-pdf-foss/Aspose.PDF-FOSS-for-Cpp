@@ -71,9 +71,10 @@ flowchart TD
 ## Key Capabilities
 
 - Open, edit, and save existing PDF documents with `Document`, including byte-verbatim
-  round-trips or an incremental `/Info`-metadata update that preserves the original bytes; open
-  password-protected files by supplying the user or owner password to `Document(path, password)`,
-  with `IsEncrypted()` reporting the state.
+  round-trips or incremental updates that preserve the original bytes; open password-protected
+  files by supplying the user or owner password to `Document(path, password)` (files with no open
+  password open with `Document(path)`), with `IsEncrypted()` reporting the state. Page edits work
+  on nested `/Pages` trees too.
 - Extract text with `Text::TextAbsorber`, which walks a whole `Document` or a single `Page`, or
   `Text::TextFragmentAbsorber` for positioned fragments with font, size, and colour.
 - Render pages to raster images through `PngDevice`, `JpegDevice`, and `BmpDevice` (single page
@@ -82,12 +83,16 @@ flowchart TD
   runtime dependency;
   `TiffDevice` supports 1/4/8/24-bpp output with median-cut palette quantisation, or a
   caller-supplied `IIndexBitmapConverter` (`Get1BppImage`/`Get4BppImage`/`Get8BppImage`) for
-  caller-controlled palette generation.
+  caller-controlled palette generation, and LZW, PackBits or CCITT Group 3 / Group 4 fax
+  compression.
 - Encrypt and decrypt with `Document::Encrypt(user, owner, permissions, algorithm)` — RC4-40,
   RC4-128, AES-128, or AES-256 (PDF 2.0, R=6) — governed by a granular `Permissions` flags enum
   (print, modify, extract, annotate, fill form, accessibility, assemble, high-res print).
-- Sign documents with `Facades::PdfFileSignature`, which adds a detached PKCS#7
-  (`adbe.pkcs7.detached`) signature with a byte-exact `/ByteRange`.
+- Sign documents with `Facades::PdfFileSignature` using your own certificate from a PKCS#12
+  (`.pfx` / `.p12`) file — RSA or ECDSA (P-256, P-384, P-521) keys — as a detached CMS
+  (`adbe.pkcs7.detached`) signature with a byte-exact `/ByteRange`; certify with DocMDP
+  permissions; verify signatures (RSA PKCS#1 v1.5, RSA-PSS, ECDSA: the signed digest and the
+  signature, not the certificate's trust chain); remove signatures and usage rights.
 - Build documents from scratch: positioned and word-wrapped text through `Text::TextBuilder`,
   `TextFragment`, and `TextParagraph` (with font lookup via `FontRepository::FindFont`), tabular
   layout through `Table`/`Row`/`Cell` (column widths, per-cell and default borders, background
@@ -101,8 +106,10 @@ flowchart TD
   Windows-1252 output.
 - Add and manage annotations across a gallery of subtypes — `Highlight`, `Underline`, `Squiggly`,
   `StrikeOut`, `Square`, `Circle`, `Line`, `Ink`, `Text` (sticky note), `FreeText`, `Stamp`, `Link`
-  (with `GoToAction`/`GoToURIAction`), and `FileAttachment` — each with a pre-generated `/AP`
-  appearance stream so it renders in any spec-conforming viewer.
+  (with `GoToAction`/`GoToURIAction`), `FileAttachment`, `RichMedia` (embedded video or audio
+  with a poster), and printer's marks (trim, bleed, registration, colour bars, page information)
+  — each with a pre-generated `/AP` appearance stream so it renders in any spec-conforming viewer.
+  Read the text under a markup annotation with `GetMarkedText`.
 - Add interactive AcroForm fields — `TextBoxField`, `CheckboxField`, `RadioButtonField`,
   `ComboBoxField`, `ListBoxField`, and push-button `ButtonField` — through the `Form` class
   (`Document::Form()`), and flatten every field into static page content with `Form::Flatten()`.
@@ -114,11 +121,14 @@ flowchart TD
   arbitrary entries, and read XMP metadata via `Metadata`.
 - Use the classic `Aspose::Pdf::Facades` API — `PdfConverter` (rasterise a PDF to multi-page TIFF
   or per-page PNG), `PdfExtractor` (text extraction honouring `StartPage`/`EndPage`),
-  `PdfFileSecurity` (encrypt/decrypt/change passwords), `PdfFileSignature` (sign),
-  `PdfBookmarkEditor` (create/extract bookmarks), `PdfFileEditor` (concatenate and split
-  documents via `Concatenate`/`SplitFromFirst`/`SplitToEnd`/`SplitToPages`), and `PdfFileStamp`
-  (page header/footer/page-number stamping via `AddHeader`/`AddFooter`/`AddPageNumber`) — each
-  binding independently to a `Document`.
+  `PdfFileSecurity` (encrypt/decrypt/change passwords/privileges), `PdfFileSignature` (sign,
+  certify, verify), `PdfBookmarkEditor` (create/extract bookmarks, XML import/export, HTML
+  export), `PdfFileEditor` (concatenate, split, booklet, N-up, margins, resize, page breaks),
+  `PdfFileStamp` (header/footer/page-number stamps), `PdfContentEditor` (attachments, document
+  JavaScript actions, viewer preferences, image replacement, stamp editing), `PdfPageEditor`
+  (rotation, zoom, page size, alignment, transitions), `PdfAnnotationEditor` (XFDF/FDF/PDF
+  annotation import, bulk edits, flattening), and `FormEditor` (field editing, actions, submit
+  buttons) — each binding independently to a `Document`.
 
 ## Installation
 
@@ -395,19 +405,32 @@ int main() {
 `[Flags]` enum (ISO 32000-1 §7.6.3.2 Table 22) — compose with `|`. Permissions are enforced by
 viewers; the library itself is not a DRM mechanism.
 
-### Sign a Document
+### Sign and Verify a Document
 
 ```cpp
 #include <aspose/pdf/facades/pdf_file_signature.hpp>
+#include <aspose/pdf/forms/pkcs7.hpp>
 
-Aspose::Pdf::Facades::PdfFileSignature sig{"input.pdf", "signed.pdf"};
-// configure the signature (certificate + key), then sign and save — a detached PKCS#7
-// (adbe.pkcs7.detached) signature with a byte-exact /ByteRange. Output verifies under the
-// OpenSSL CLI. See tests/facades_pdf_file_signature_smoke_test.cpp for the full signing flow.
+namespace fac = Aspose::Pdf::Facades;
+
+{
+    fac::PdfFileSignature sig{"input.pdf", "signed.pdf"};
+    Aspose::Pdf::Forms::PKCS7 cert{"signer.p12", "pfx-password"};  // RSA or EC key
+    cert.Reason("Approved");
+    sig.Sign("Signature1", cert);  // detached CMS, byte-exact /ByteRange
+    sig.Save();
+}
+
+fac::PdfFileSignature check{"signed.pdf"};
+bool valid = check.VerifySignature("Signature1");   // false if the file was modified
+std::string signer = check.GetSignerName("Signature1");
 ```
 
-See [`tests/facades_pdf_file_signature_smoke_test.cpp`](tests/facades_pdf_file_signature_smoke_test.cpp)
-for the full signing flow.
+`Certify` writes a DocMDP certification instead; `SetCertificate(pfx, password)` sets the
+certificate for every `Sign` call. Verification checks the digest of the signed bytes and the
+signature against the embedded certificate — not the certificate's trust chain or revocation.
+The output also verifies under the OpenSSL CLI (see
+[`tests/pdf_file_signature_pfx_smoke_test.cpp`](tests/pdf_file_signature_pfx_smoke_test.cpp)).
 
 ### Add an Annotation
 
@@ -422,7 +445,27 @@ page.Annotations().Add(a);
 ```
 
 Available subtypes: `Highlight`, `Underline`, `Squiggly`, `StrikeOut`, `Square`, `Circle`, `Line`,
-`Ink`, `Text`, `FreeText`, `Stamp`, `Link` (with `GoToAction`/`GoToURIAction`), `FileAttachment`.
+`Polygon`, `PolyLine`, `Ink`, `Text`, `FreeText`, `Stamp`, `Caret`, `Link` (with
+`GoToAction`/`GoToURIAction`), `FileAttachment`, `Redaction`, `RichMedia`, and the printer's-mark
+annotations (`PrinterMarkAnnotation::AddPrinterMarks`).
+
+### Embed a Video
+
+```cpp
+#include <aspose/pdf/annotations/rich_media_annotation.hpp>
+
+std::vector<std::byte> ReadBytes(const char* path);  // your file reader
+
+ann::RichMediaAnnotation video(page, pdf::Rectangle(100, 400, 400, 600, true));  // keep alive
+video.SetContent("clip.mp4", ReadBytes("clip.mp4"));
+video.Type(ann::RichMediaAnnotation::ContentType::Video);
+video.ActivateOn(ann::RichMediaAnnotation::ActivationEvent::PageOpen);
+video.SetPoster(ReadBytes("poster.png"));  // PNG or JPEG shown until it plays
+page.Annotations().Add(video);
+```
+
+The media file is embedded as an asset and played directly; pass a Flash player with
+`CustomPlayer(bytes)` (and `CustomFlashVariables`) only if you need one.
 
 ### Build an AcroForm Field
 
@@ -835,7 +878,7 @@ most-used entry points follows below it.
 ### Annotations and Actions
 
 - `Annotation`/`AnnotationCollection` — base type and per-page collection
-- Concrete subtypes: `HighlightAnnotation`, `TextAnnotation`, `FreeTextAnnotation`, `StampAnnotation`, `LinkAnnotation`, `InkAnnotation`, `RedactionAnnotation`, and more
+- Concrete subtypes: `HighlightAnnotation`, `TextAnnotation`, `FreeTextAnnotation`, `StampAnnotation`, `LinkAnnotation`, `InkAnnotation`, `RedactionAnnotation`, `RichMediaAnnotation` (`SetContent`, `SetPoster`, `CustomPlayer`), printer's marks, and more
 - `PdfAction`, `GoToAction`, `GoToURIAction`, `NamedAction`, `JavascriptAction`, `SubmitFormAction`
 
 ### Forms (AcroForm)
@@ -854,16 +897,21 @@ most-used entry points follows below it.
 
 - `CryptoAlgorithm` — `RC4x40`, `RC4x128`, `AESx128`, `AESx256`
 - `Permissions` — `[Flags]` enum per ISO 32000-1 §7.6.3.2 Table 22
-- `Facades::PdfFileSignature` — detached PKCS#7 signing with a byte-exact `/ByteRange`
-- `Facades::PdfFileSecurity` — encrypt/decrypt/change passwords
+- `Facades::PdfFileSignature` — `Sign`/`Certify` with a PKCS#12 certificate (RSA or ECDSA), `VerifySignature`, `RemoveSignature(s)`, `GetAccessPermissions`, usage rights, `IsLtvEnabled`
+- `Forms::Signature::Verify()` — verifies a signature read from a loaded document's signature field
+- `Facades::PdfFileSecurity` — encrypt/decrypt/change passwords, `SetPrivilege`
 
 ### Facades (Aspose.Pdf.Facades)
 
 - `Facades::Facade` — base type; `BindPdf` overloads accept a file path or an existing `Document`
 - `Facades::PdfConverter` — rasterise a PDF to multi-page TIFF or per-page PNG
 - `Facades::PdfExtractor` — `StartPage`/`EndPage`-scoped text extraction
-- `Facades::PdfBookmarkEditor` — `CreateBookmarkOfPage(title, pageNumber)`
-- `Facades::PdfFileEditor` — `Concatenate(files, out)`, `SplitFromFirst`/`SplitToEnd`/`SplitToPages`/`SplitToBulks`, plus `Try*` non-throwing variants
+- `Facades::PdfBookmarkEditor` — `CreateBookmarkOfPage(title, pageNumber)`, `ExtractBookmarks`, `ExportBookmarksToXML`/`ImportBookmarksWithXML`, `ExportBookmarksToHtml`
+- `Facades::PdfContentEditor` — attachments, `AddDocumentAdditionalAction`, `ChangeViewerPreference` (`ViewerPreference` flags), `ReplaceImage`, `ReplaceText`, stamp delete/hide/show/move
+- `Facades::PdfPageEditor` — `Rotation`, `Zoom`, `PageSize`, alignment, `MovePosition`, transitions, `ApplyChanges`
+- `Facades::PdfAnnotationEditor` — `ImportAnnotationsFromXfdf`/`FromFdf`, `ImportAnnotations`, `ModifyAnnotations[Author]`, `FlatteningAnnotations`, `DeleteAnnotations`
+- `Facades::FormEditor` — field attributes, appearance, limits, combs, scripts, submit buttons
+- `Facades::PdfFileEditor` — `Concatenate(files, out)`, `SplitFromFirst`/`SplitToEnd`/`SplitToPages`/`SplitToBulks`, `MakeBooklet`, `MakeNUp`, `AddMargins`, `ResizeContents`, `AddPageBreak`, plus `Try*` non-throwing variants
 - `Facades::PdfFileStamp` — `AddHeader(text, margin)`, `AddFooter(text, margin)`, `AddPageNumber(...)`, drawn as real text into each page
 
 </details>
@@ -882,22 +930,24 @@ most-used entry points follows below it.
 Aspose.PDF FOSS for C++ is a v1 release and a deliberate subset of the commercial Aspose.PDF for
 .NET library. A few boundaries are worth noting:
 
-- A handful of `XmpValue` type-checking helpers — `IsDateTime`, `IsField`, `IsNamedValue`,
-  `IsRaw`, `IsNamedValues`, and `IsStructure` — are stubs that always return `false`; use
-  `IsString`/`IsInteger`/`IsDouble`/`IsArray` instead.
+- `XmpValue` models string, integer, double, and array values; dates and structures read from a
+  file come back as strings, so `IsDateTime`, `IsField`, `IsNamedValue`, `IsRaw`,
+  `IsNamedValues`, and `IsStructure` return `false`.
+- The few methods that are not implemented yet throw `std::logic_error` naming the missing
+  capability instead of silently doing nothing (`grep PENDING src` lists them).
+- Signature verification checks the signed digest and the signature against the embedded
+  certificate; it does not validate the certificate's trust chain or revocation status.
 - Standard-14 font fallback covers 12 of the 14 standard fonts (Helvetica, Times-Roman, and
   Courier, four styles each) via bundled Liberation substitutes; Symbol and ZapfDingbats have no
   bundled fallback.
-- The incremental-update metadata writer patches an existing `/Info` object; a from-scratch
-  document has no `/Info` to patch, so setting metadata on one and saving throws.
 - `Permissions` set via encryption are enforced by the consuming PDF viewer, not by this library
   — the encryption bitfield is written into the file, but the library itself is not a DRM
   mechanism.
 
 These limitations don't apply to
-[Aspose.PDF for C++ — Enterprise Edition](https://products.aspose.com/pdf/cpp/), which adds full support for
-every Facades method (including `PdfFileEditor` and `PdfFileStamp`), complete XMP type-checking,
-and broader format coverage beyond this FOSS edition's v1 scope.
+[Aspose.PDF for C++ — Enterprise Edition](https://products.aspose.com/pdf/cpp/), which adds complete
+XMP type-checking, certificate-trust validation for signatures, and broader format coverage
+beyond this FOSS edition's v1 scope.
 
 ## Development and Testing
 

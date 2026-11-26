@@ -25,6 +25,7 @@
 #include <aspose/pdf/annotations/stamp_annotation.hpp>
 #include <aspose/pdf/annotations/strike_out_annotation.hpp>
 #include <aspose/pdf/annotations/markup_annotation.hpp>
+#include <aspose/pdf/annotations/rich_media_annotation.hpp>
 #include <aspose/pdf/annotations/color_bar_annotation.hpp>
 #include <aspose/pdf/annotations/corner_printer_mark_annotation.hpp>
 #include <aspose/pdf/annotations/registration_mark_annotation.hpp>
@@ -2200,6 +2201,9 @@ Aspose::Pdf::Forms::Form& Document::Form() {
 namespace {
 
 // Defined further down (same unnamed namespace).
+bool DecodeImageForXObject(const std::vector<std::byte>& file_bytes, int& w,
+                           int& h, std::vector<std::byte>& body,
+                           const char*& filter, const char*& colorspace);
 void SetDictKey(foundation::objects::Dict& d, const char* key,
                 foundation::objects::Value v);
 void EraseDictKey(foundation::objects::Dict& d, const char* key);
@@ -2235,6 +2239,7 @@ const char* PdfSubtypeName(
         case AT::Screen:          return "Screen";
         case AT::Watermark:       return "Watermark";
         case AT::Redaction:       return "Redact";  // PDF spec /Subtype name
+        case AT::RichMedia:       return "RichMedia";
         case AT::TrimMark:
         case AT::BleedMark:
         case AT::RegistrationMark:
@@ -2523,7 +2528,10 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         // Emit each newly-added annotation as a new object.
         for (const auto* ptr : new_annots) {
             auto annot_dict = BuildAnnotDict(*ptr, page_ref);
-            if (!annot_dict) continue;
+            if (!annot_dict)
+                throw std::logic_error(
+                    "Aspose::Pdf::Document::Save: saving this annotation type "
+                    "is not implemented");
 
             // Link navigation — serialise the activated action / destination
             // so the hyperlink actually jumps. A GoToURIAction becomes
@@ -2829,6 +2837,183 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                            << " Td (";
                         esc(label);
                         cs << ") Tj ET Q\n";
+                        break;
+                    }
+                    case AN::AnnotationType::RichMedia: {
+                        namespace fo = foundation::objects;
+                        const auto& rm = dynamic_cast<const AN::RichMediaAnnotation&>(*ptr);
+                        if (rm.content_name_.empty() || rm.content_.empty())
+                            throw std::runtime_error(
+                                "Aspose::Pdf::Document::Save: RichMediaAnnotation without "
+                                "content (call SetContent)");
+                        has_ap = false;  // its own appearance below
+                        auto name_v = [](const char* n) { return fo::Value(std::string(n)); };
+                        auto str_v = [](const std::string& s) {
+                            fo::String ps;
+                            ps.bytes = EncodePdfString(s);
+                            ps.kind = fo::StringKind::Literal;
+                            return fo::Value(std::move(ps));
+                        };
+                        auto ref_v = [](std::uint32_t id) { return fo::Value(fo::Ref{id, 0}); };
+                        auto add_obj = [&](fo::Value v) {
+                            const std::uint32_t id = next_id++;
+                            foundation::pdf_writer_incremental::DirtyObject d;
+                            d.id = id; d.generation = 0; d.value = std::move(v);
+                            dirty.push_back(std::move(d));
+                            return id;
+                        };
+                        auto add_stream = [&](fo::Dict header, const std::vector<std::byte>& body) {
+                            ap_bodies.push_back(std::make_unique<std::vector<std::byte>>(body));
+                            fo::Stream st;
+                            st.header = std::move(header);
+                            st.body = std::span<const std::byte>(ap_bodies.back()->data(),
+                                                                 ap_bodies.back()->size());
+                            return add_obj(fo::Value(std::move(st)));
+                        };
+                        auto mime = [](const std::string& n) -> const char* {
+                            auto ends = [&](const char* e) {
+                                const std::string s(e);
+                                return n.size() >= s.size() &&
+                                       n.compare(n.size() - s.size(), s.size(), s) == 0;
+                            };
+                            if (ends(".swf")) return "application/x-shockwave-flash";
+                            if (ends(".mp4") || ends(".m4v")) return "video/mp4";
+                            if (ends(".mp3")) return "audio/mpeg";
+                            return nullptr;
+                        };
+                        // Embedded file + file specification per asset.
+                        auto embed = [&](const std::string& name, const std::vector<std::byte>& data) {
+                            fo::Dict ef;
+                            ef.entries.emplace_back("Type", name_v("EmbeddedFile"));
+                            if (const char* m = mime(name)) ef.entries.emplace_back("Subtype", name_v(m));
+                            const std::uint32_t sid = add_stream(std::move(ef), data);
+                            fo::Dict efd;
+                            efd.entries.emplace_back("F", ref_v(sid));
+                            fo::Dict fs;
+                            fs.entries.emplace_back("Type", name_v("Filespec"));
+                            fs.entries.emplace_back("F", str_v(name));
+                            fs.entries.emplace_back("UF", str_v(name));
+                            fs.entries.emplace_back("EF", fo::Value(std::move(efd)));
+                            return add_obj(fo::Value(std::move(fs)));
+                        };
+                        const bool flash = !rm.custom_player_.empty();
+                        std::vector<std::pair<std::string, const std::vector<std::byte>*>> assets;
+                        if (flash) assets.emplace_back("player.swf", &rm.custom_player_);
+                        assets.emplace_back(rm.content_name_, &rm.content_);
+                        for (const auto& [n, d] : rm.custom_data_) assets.emplace_back(n, &d);
+                        std::sort(assets.begin(), assets.end(),
+                                  [](const auto& a, const auto& b) { return a.first < b.first; });
+                        fo::Array names;
+                        std::uint32_t player_fs = 0, content_fs = 0;
+                        for (const auto& [n, d] : assets) {
+                            const std::uint32_t fs = embed(n, *d);
+                            names.items.push_back(str_v(n));
+                            names.items.push_back(ref_v(fs));
+                            if (flash && n == "player.swf") player_fs = fs;
+                            if (n == rm.content_name_) content_fs = fs;
+                        }
+                        using CT = AN::RichMediaAnnotation::ContentType;
+                        const char* kind = rm.type_ == CT::Video   ? "Video"
+                                           : rm.type_ == CT::Audio ? "Sound"
+                                                                   : nullptr;
+                        // Instance: the Flash player with FlashVars, or the media itself.
+                        fo::Dict instance;
+                        instance.entries.emplace_back("Type", name_v("RichMediaInstance"));
+                        instance.entries.emplace_back("Subtype", name_v(flash ? "Flash" : (kind ? kind : "Video")));
+                        instance.entries.emplace_back("Asset", ref_v(flash ? player_fs : content_fs));
+                        if (flash) {
+                            std::string vars = rm.custom_flash_variables_;
+                            if (vars.empty())
+                                vars = "src=" + rm.content_name_ +
+                                       (rm.type_ == CT::Video ? "&autoPlay=true" : "");
+                            fo::Dict params;
+                            params.entries.emplace_back("Type", name_v("RichMediaParams"));
+                            params.entries.emplace_back("Binding", name_v("Background"));
+                            params.entries.emplace_back("FlashVars", str_v(vars));
+                            instance.entries.emplace_back("Params", fo::Value(std::move(params)));
+                        }
+                        const std::uint32_t inst_id = add_obj(fo::Value(std::move(instance)));
+                        fo::Dict config;
+                        config.entries.emplace_back("Type", name_v("RichMediaConfiguration"));
+                        if (rm.type_ == CT::Video) config.entries.emplace_back("Subtype", name_v("Video"));
+                        else if (rm.type_ == CT::Audio) config.entries.emplace_back("Subtype", name_v("Sound"));
+                        { fo::Array insts; insts.items.push_back(ref_v(inst_id));
+                          config.entries.emplace_back("Instances", fo::Value(std::move(insts))); }
+                        const std::uint32_t conf_id = add_obj(fo::Value(std::move(config)));
+                        fo::Dict content;
+                        content.entries.emplace_back("Type", name_v("RichMediaContent"));
+                        { fo::Dict a; a.entries.emplace_back("Names", fo::Value(std::move(names)));
+                          content.entries.emplace_back("Assets", fo::Value(std::move(a))); }
+                        { fo::Array cs2; cs2.items.push_back(ref_v(conf_id));
+                          content.entries.emplace_back("Configurations", fo::Value(std::move(cs2))); }
+                        annot_dict->entries.emplace_back("RichMediaContent", ref_v(add_obj(fo::Value(std::move(content)))));
+                        using AE = AN::RichMediaAnnotation::ActivationEvent;
+                        const char* cond = rm.activate_on_ == AE::PageOpen      ? "PO"
+                                           : rm.activate_on_ == AE::PageVisible ? "PV"
+                                                                                : "XA";
+                        fo::Dict presentation;
+                        presentation.entries.emplace_back("Type", name_v("RichMediaPresentation"));
+                        presentation.entries.emplace_back("Style", name_v("Embedded"));
+                        presentation.entries.emplace_back("Toolbar", fo::Value(true));
+                        presentation.entries.emplace_back("Transparent", fo::Value(false));
+                        presentation.entries.emplace_back("PassContextClick", fo::Value(false));
+                        presentation.entries.emplace_back("NavigationPane", fo::Value(false));
+                        fo::Dict activation;
+                        activation.entries.emplace_back("Type", name_v("RichMediaActivation"));
+                        activation.entries.emplace_back("Condition", name_v(cond));
+                        activation.entries.emplace_back("Configuration", ref_v(conf_id));
+                        activation.entries.emplace_back("Presentation", fo::Value(std::move(presentation)));
+                        fo::Dict deactivation;
+                        deactivation.entries.emplace_back("Type", name_v("RichMediaDeactivation"));
+                        deactivation.entries.emplace_back("Condition", name_v("XD"));
+                        fo::Dict settings;
+                        settings.entries.emplace_back("Type", name_v("RichMediaSettings"));
+                        settings.entries.emplace_back("Activation", fo::Value(std::move(activation)));
+                        settings.entries.emplace_back("Deactivation", fo::Value(std::move(deactivation)));
+                        annot_dict->entries.emplace_back("RichMediaSettings", ref_v(add_obj(fo::Value(std::move(settings)))));
+                        // Appearance: the poster, else a frame with a play triangle.
+                        std::ostringstream ap;
+                        fo::Dict res;
+                        int pw = 0, ph = 0;
+                        std::vector<std::byte> pbody;
+                        const char* pfilter = nullptr;
+                        const char* pcs = nullptr;
+                        if (!rm.poster_.empty() &&
+                            DecodeImageForXObject(rm.poster_, pw, ph, pbody, pfilter, pcs)) {
+                            fo::Dict ih;
+                            ih.entries.emplace_back("Type", name_v("XObject"));
+                            ih.entries.emplace_back("Subtype", name_v("Image"));
+                            ih.entries.emplace_back("Width", fo::Value(static_cast<std::int64_t>(pw)));
+                            ih.entries.emplace_back("Height", fo::Value(static_cast<std::int64_t>(ph)));
+                            ih.entries.emplace_back("ColorSpace", name_v(pcs));
+                            ih.entries.emplace_back("BitsPerComponent", fo::Value(static_cast<std::int64_t>(8)));
+                            ih.entries.emplace_back("Filter", name_v(pfilter));
+                            const std::uint32_t img = add_stream(std::move(ih), pbody);
+                            fo::Dict xo;
+                            xo.entries.emplace_back("Im0", ref_v(img));
+                            res.entries.emplace_back("XObject", fo::Value(std::move(xo)));
+                            ap << "q " << w << " 0 0 " << h << ' ' << llx << ' ' << lly << " cm /Im0 Do Q\n";
+                        } else {
+                            const double a = std::min(20.0, h / 2);
+                            const double th = std::sqrt(3.0) * a / 2;
+                            const double tx = llx + (w - th) / 2, ty = lly + h / 2;
+                            ap << "q 1 g 0 G " << llx << ' ' << lly << ' ' << w << ' ' << h << " re b "
+                               << "0.83 g " << tx << ' ' << (ty - a / 2) << " m " << tx << ' '
+                               << (ty + a / 2) << " l " << (tx + th) << ' ' << ty << " l b Q\n";
+                        }
+                        fo::Dict apx;
+                        apx.entries.emplace_back("Type", name_v("XObject"));
+                        apx.entries.emplace_back("Subtype", name_v("Form"));
+                        { fo::Array bb; for (double dv : {llx, lly, urx, ury}) bb.items.push_back(fo::Value(dv));
+                          apx.entries.emplace_back("BBox", fo::Value(std::move(bb))); }
+                        apx.entries.emplace_back("Resources", fo::Value(std::move(res)));
+                        const std::string aps = ap.str();
+                        const std::uint32_t apid = add_stream(
+                            std::move(apx), std::vector<std::byte>(reinterpret_cast<const std::byte*>(aps.data()),
+                                                                   reinterpret_cast<const std::byte*>(aps.data()) + aps.size()));
+                        fo::Dict apd;
+                        apd.entries.emplace_back("N", ref_v(apid));
+                        annot_dict->entries.emplace_back("AP", fo::Value(std::move(apd)));
                         break;
                     }
                     case AN::AnnotationType::TrimMark:
