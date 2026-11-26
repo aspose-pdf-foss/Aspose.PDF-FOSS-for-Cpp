@@ -227,6 +227,9 @@
 #include <aspose/pdf/facades/saveable_facade.hpp>
 #include <aspose/pdf/facades/signature_name.hpp>
 #include <aspose/pdf/facades/stamp_type.hpp>
+#include <aspose/pdf/facades/viewer_preference.hpp>
+#include <aspose/pdf/facades/viewer_preference.hpp>
+#include <aspose/pdf/facades/viewer_preference.hpp>
 #include <aspose/pdf/facades/submit_form_flag.hpp>
 #include <aspose/pdf/facades/vertical_alignment_type.hpp>
 #include <aspose/pdf/facades/word_wrap_mode.hpp>

@@ -103,6 +103,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <random>
@@ -1541,7 +1542,7 @@ void Document::Save(const std::string& outputFileName) const {
         && !page_geom_dirty_ && !outlines_dirty_ && !encrypt_requested_
         && !text_edits_dirty && !optimize_requested_ && !paragraphs_dirty
         && !images_dirty && !artifacts_dirty && !redactions_dirty
-        && pending_flatten_rules_.empty()) {
+        && pending_flatten_rules_.empty() && catalog_ops_.empty()) {
         WriteAll(outputFileName,
                  std::span<const std::byte>(bytes_.data(), bytes_.size()));
         return;
@@ -1587,6 +1588,10 @@ void Document::Save(const std::string& outputFileName) const {
 
     if (embedded_dirty) {
         working = AppendEmbeddedFilesUpdate(working);
+    }
+
+    if (!catalog_ops_.empty()) {
+        working = AppendCatalogOpsUpdate(working);
     }
 
     if (named_dests_dirty) {
@@ -3950,12 +3955,22 @@ void Document::ApplyTextStamps(const std::vector<TextStampReq>& stamps) {
                 : nullptr;
         if (page_dict == nullptr) continue;
 
+        // Each stamp is a marked-content block PdfContentEditor can find,
+        // move (cm), hide (empty clip) or delete:
+        //   /AspStamp <</StampId n /X x /Y y /Dx 0 /Dy 0 /Hidden false>> BDC
+        //   q 1 0 0 1 0 0 cm
+        //   BT ... ET
+        //   Q EMC
         std::string body;
         for (const auto& s : stamps) {
             if (s.leaf != leaf) continue;
+            body += "/AspStamp <</StampId " + std::to_string(s.stamp_id) +
+                    " /X " + FmtNum(s.x) + " /Y " + FmtNum(s.y) +
+                    " /Dx 0 /Dy 0 /Hidden false>> BDC q 1 0 0 1 0 0 cm\n";
             body += "BT /AspHelv " + FmtNum(s.size) + " Tf " +
                     FmtNum(s.x) + " " + FmtNum(s.y) + " Td (" +
                     EscapeContentLiteral(s.text) + ") Tj ET\n";
+            body += "Q EMC\n";
         }
         std::vector<std::byte> body_bytes;
         body_bytes.reserve(body.size());
@@ -11391,6 +11406,381 @@ bool Document::CatalogHasEntryInternal(const std::string& key) const noexcept {
     } catch (...) {
         return false;
     }
+}
+
+namespace {
+
+namespace vp {  // Aspose ViewerPreference flags
+constexpr int PageLayoutSinglePage = 1, PageLayoutOneColumn = 2,
+              PageLayoutTwoColumnLeft = 4, PageLayoutTwoColumnRight = 8,
+              PageModeUseNone = 16, PageModeUseOutlines = 32, PageModeUseThumbs = 64,
+              PageModeFullScreen = 128, HideToolbar = 256, HideMenubar = 512,
+              HideWindowUI = 1024, FitWindow = 2048, CenterWindow = 4096,
+              NonFullScreenPageModeUseNone = 8192, NonFullScreenPageModeUseOutlines = 16384,
+              NonFullScreenPageModeUseThumbs = 32768, DirectionL2R = 65536,
+              DirectionR2L = 131072, DisplayDocTitle = 262144,
+              NonFullScreenPageModeUseOC = 524288, PageModeUseOC = 1048576,
+              PageModeUseAttachment = 2097152, Simplex = 4194304,
+              DuplexFlipShortEdge = 8388608, DuplexFlipLongEdge = 16777216,
+              PrintScalingAppDefault = 1 << 25, PrintScalingNone = 1 << 26,
+              PickTrayByPDFSize = 1 << 27;
+}  // namespace vp
+
+std::string CatName(const foundation::objects::Dict& d, const char* key) {
+    const auto* v = DictGet(d, key);
+    const auto* n = v ? std::get_if<std::string>(&v->v) : nullptr;
+    return n ? *n : std::string();
+}
+
+bool CatBool(const foundation::objects::Dict& d, const char* key) {
+    const auto* v = DictGet(d, key);
+    const auto* b = v ? std::get_if<bool>(&v->v) : nullptr;
+    return b != nullptr && *b;
+}
+
+// The catalog's /ViewerPreferences as an inline dict (resolved, or empty).
+foundation::objects::Dict CatViewerPrefs(const foundation::objects::Dump& dump,
+                                         const foundation::objects::Dict& cat) {
+    const auto* d = SigResolveDict(dump, DictGet(cat, "ViewerPreferences"));
+    return d ? *d : foundation::objects::Dict{};
+}
+
+// Apply one staged edit to a catalog copy (indirect /ViewerPreferences and
+// /AA are inlined).
+void ApplyCatalogOp(foundation::objects::Dict& cat, const foundation::objects::Dump& dump,
+                    const Document::CatalogOp& op) {
+    namespace fo = foundation::objects;
+    using K = Document::CatalogOp::Kind;
+    auto js_action = [](const std::string& code) {
+        fo::Dict a;
+        a.entries.emplace_back("S", SigNameVal("JavaScript"));
+        a.entries.emplace_back("JS", SigLiteralVal(code));
+        return fo::Value(std::move(a));
+    };
+    if (op.kind == K::RemoveOpenAction) {
+        SigErase(cat, "OpenAction");
+        return;
+    }
+    if (op.kind == K::JavaScriptAction) {
+        if (op.trigger == "DO") {
+            SigSet(cat, "OpenAction", js_action(op.javascript));
+        } else {
+            const auto* old = SigResolveDict(dump, DictGet(cat, "AA"));
+            fo::Dict aa = old ? *old : fo::Dict{};
+            SigSet(aa, op.trigger.c_str(), js_action(op.javascript));
+            SigSet(cat, "AA", fo::Value(std::move(aa)));
+        }
+        return;
+    }
+    fo::Dict prefs = CatViewerPrefs(dump, cat);
+    bool prefs_changed = false;
+    auto pref_name = [&](const char* key, const char* value) {
+        SigSet(prefs, key, SigNameVal(value));
+        prefs_changed = true;
+    };
+    auto pref_true = [&](const char* key) {
+        SigSet(prefs, key, fo::Value(true));
+        prefs_changed = true;
+    };
+    const int f = op.flag;
+    if (f & vp::PageLayoutSinglePage) SigSet(cat, "PageLayout", SigNameVal("SinglePage"));
+    if (f & vp::PageLayoutOneColumn) SigSet(cat, "PageLayout", SigNameVal("OneColumn"));
+    if (f & vp::PageLayoutTwoColumnLeft) SigSet(cat, "PageLayout", SigNameVal("TwoColumnLeft"));
+    if (f & vp::PageLayoutTwoColumnRight) SigSet(cat, "PageLayout", SigNameVal("TwoColumnRight"));
+    if (f & vp::PageModeUseNone) SigSet(cat, "PageMode", SigNameVal("UseNone"));
+    if (f & vp::PageModeUseOutlines) SigSet(cat, "PageMode", SigNameVal("UseOutlines"));
+    if (f & vp::PageModeUseThumbs) SigSet(cat, "PageMode", SigNameVal("UseThumbs"));
+    if (f & vp::PageModeFullScreen) SigSet(cat, "PageMode", SigNameVal("FullScreen"));
+    if (f & vp::PageModeUseOC) SigSet(cat, "PageMode", SigNameVal("UseOC"));
+    if (f & vp::PageModeUseAttachment) SigSet(cat, "PageMode", SigNameVal("UseAttachments"));
+    if (f & vp::HideToolbar) pref_true("HideToolbar");
+    if (f & vp::HideMenubar) pref_true("HideMenubar");
+    if (f & vp::HideWindowUI) pref_true("HideWindowUI");
+    if (f & vp::FitWindow) pref_true("FitWindow");
+    if (f & vp::CenterWindow) pref_true("CenterWindow");
+    if (f & vp::DisplayDocTitle) pref_true("DisplayDocTitle");
+    if (f & vp::NonFullScreenPageModeUseNone) pref_name("NonFullScreenPageMode", "UseNone");
+    if (f & vp::NonFullScreenPageModeUseOutlines) pref_name("NonFullScreenPageMode", "UseOutlines");
+    if (f & vp::NonFullScreenPageModeUseThumbs) pref_name("NonFullScreenPageMode", "UseThumbs");
+    if (f & vp::NonFullScreenPageModeUseOC) {
+        SigSet(cat, "PageMode", SigNameVal("FullScreen"));
+        pref_name("NonFullScreenPageMode", "UseOC");
+    }
+    if (f & vp::DirectionL2R) pref_name("Direction", "L2R");
+    if (f & vp::DirectionR2L) pref_name("Direction", "R2L");
+    if (f & vp::Simplex) pref_name("Duplex", "Simplex");
+    if (f & vp::DuplexFlipShortEdge) pref_name("Duplex", "DuplexFlipShortEdge");
+    if (f & vp::DuplexFlipLongEdge) pref_name("Duplex", "DuplexFlipLongEdge");
+    if (f & vp::PrintScalingAppDefault) pref_name("PrintScaling", "AppDefault");
+    if (f & vp::PrintScalingNone) pref_name("PrintScaling", "None");
+    if (f & vp::PickTrayByPDFSize) pref_true("PickTrayByPDFSize");
+    if (prefs_changed) SigSet(cat, "ViewerPreferences", fo::Value(std::move(prefs)));
+}
+
+int ViewerFlagsOf(const foundation::objects::Dump& dump, const foundation::objects::Dict& cat) {
+    int f = 0;
+    const std::string layout = CatName(cat, "PageLayout");
+    if (layout == "SinglePage") f |= vp::PageLayoutSinglePage;
+    else if (layout == "OneColumn") f |= vp::PageLayoutOneColumn;
+    else if (layout == "TwoColumnLeft") f |= vp::PageLayoutTwoColumnLeft;
+    else if (layout == "TwoColumnRight") f |= vp::PageLayoutTwoColumnRight;
+    const std::string mode = CatName(cat, "PageMode");
+    if (mode == "UseNone") f |= vp::PageModeUseNone;
+    else if (mode == "UseOutlines") f |= vp::PageModeUseOutlines;
+    else if (mode == "UseThumbs") f |= vp::PageModeUseThumbs;
+    else if (mode == "FullScreen") f |= vp::PageModeFullScreen;
+    else if (mode == "UseOC") f |= vp::PageModeUseOC;
+    else if (mode == "UseAttachments") f |= vp::PageModeUseAttachment;
+    const auto prefs = CatViewerPrefs(dump, cat);
+    if (CatBool(prefs, "HideToolbar")) f |= vp::HideToolbar;
+    if (CatBool(prefs, "HideMenubar")) f |= vp::HideMenubar;
+    if (CatBool(prefs, "HideWindowUI")) f |= vp::HideWindowUI;
+    if (CatBool(prefs, "FitWindow")) f |= vp::FitWindow;
+    if (CatBool(prefs, "CenterWindow")) f |= vp::CenterWindow;
+    if (CatBool(prefs, "DisplayDocTitle")) f |= vp::DisplayDocTitle;
+    if (CatBool(prefs, "PickTrayByPDFSize")) f |= vp::PickTrayByPDFSize;
+    const std::string nfs = CatName(prefs, "NonFullScreenPageMode");
+    if (nfs == "UseNone") f |= vp::NonFullScreenPageModeUseNone;
+    else if (nfs == "UseOutlines") f |= vp::NonFullScreenPageModeUseOutlines;
+    else if (nfs == "UseThumbs") f |= vp::NonFullScreenPageModeUseThumbs;
+    else if (nfs == "UseOC") f |= vp::NonFullScreenPageModeUseOC;
+    const std::string dir = CatName(prefs, "Direction");
+    if (dir == "L2R") f |= vp::DirectionL2R;
+    else if (dir == "R2L") f |= vp::DirectionR2L;
+    const std::string duplex = CatName(prefs, "Duplex");
+    if (duplex == "Simplex") f |= vp::Simplex;
+    else if (duplex == "DuplexFlipShortEdge") f |= vp::DuplexFlipShortEdge;
+    else if (duplex == "DuplexFlipLongEdge") f |= vp::DuplexFlipLongEdge;
+    const std::string scaling = CatName(prefs, "PrintScaling");
+    if (scaling == "AppDefault") f |= vp::PrintScalingAppDefault;
+    else if (scaling == "None") f |= vp::PrintScalingNone;
+    return f;
+}
+
+// ---- stamp blocks (see ApplyTextStamps) --------------------------------------
+
+struct StampBlock {
+    std::size_t begin = 0, end = 0;     // [begin, end) in the stream text
+    std::size_t body_begin = 0;         // after the header line
+    std::size_t body_end = 0;           // where "Q EMC\n" starts
+    int id = 0;
+    double x = 0, y = 0, dx = 0, dy = 0;
+    bool hidden = false;
+};
+
+double PropNum(const std::string& props, const std::string& key) {
+    const auto p = props.find("/" + key + " ");
+    if (p == std::string::npos) return 0.0;
+    try {
+        return std::stod(props.substr(p + key.size() + 2));
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+std::vector<StampBlock> FindStampBlocks(const std::string& text) {
+    static const std::string kOpen = "/AspStamp <<";
+    static const std::string kClose = "Q EMC\n";
+    std::vector<StampBlock> out;
+    std::size_t pos = 0;
+    while ((pos = text.find(kOpen, pos)) != std::string::npos) {
+        const auto props_end = text.find(">> BDC", pos);
+        const auto line_end = props_end == std::string::npos ? std::string::npos
+                                                             : text.find('\n', props_end);
+        const auto close = line_end == std::string::npos ? std::string::npos
+                                                         : text.find(kClose, line_end);
+        if (close == std::string::npos) break;
+        StampBlock b;
+        b.begin = pos;
+        b.body_begin = line_end + 1;
+        b.body_end = close;
+        b.end = close + kClose.size();
+        const std::string props = text.substr(pos + kOpen.size(), props_end - pos - kOpen.size());
+        b.id = static_cast<int>(PropNum(props, "StampId"));
+        b.x = PropNum(props, "X");
+        b.y = PropNum(props, "Y");
+        b.dx = PropNum(props, "Dx");
+        b.dy = PropNum(props, "Dy");
+        b.hidden = props.find("/Hidden true") != std::string::npos;
+        out.push_back(b);
+        pos = b.end;
+    }
+    return out;
+}
+
+std::string StampHeader(const StampBlock& b) {
+    return "/AspStamp <</StampId " + std::to_string(b.id) + " /X " + FmtNum(b.x) +
+           " /Y " + FmtNum(b.y) + " /Dx " + FmtNum(b.dx) + " /Dy " + FmtNum(b.dy) +
+           " /Hidden " + (b.hidden ? "true" : "false") + ">> BDC q 1 0 0 1 " +
+           FmtNum(b.dx) + " " + FmtNum(b.dy) + " cm" + (b.hidden ? " 0 0 0 0 re W n" : "") +
+           "\n";
+}
+
+}  // namespace
+
+void Document::AddAttachmentInternal(const std::string& path,
+                                     const std::string& description) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        throw std::runtime_error("Aspose::Pdf::Document: cannot read attachment " + path);
+    std::vector<char> raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    FileSpecification fs(std::filesystem::path(path).filename().string(), description);
+    fs.content_.resize(raw.size());
+    for (std::size_t i = 0; i < raw.size(); ++i) fs.content_[i] = static_cast<std::byte>(raw[i]);
+    EmbeddedFiles().Add(std::move(fs));
+}
+
+void Document::StageCatalogOpInternal(CatalogOp op) {
+    catalog_ops_.push_back(std::move(op));
+}
+
+int Document::ViewerPreferenceInternal() const {
+    try {
+        auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+        const auto trailer_bundle = foundation::trailer::Parse(span);
+        const auto dump = foundation::objects::Parse(span);
+        const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+        const auto* cat_in =
+            catalog ? std::get_if<foundation::objects::Dict>(&catalog->value.v) : nullptr;
+        foundation::objects::Dict cat = cat_in ? *cat_in : foundation::objects::Dict{};
+        for (const auto& op : catalog_ops_) ApplyCatalogOp(cat, dump, op);
+        return ViewerFlagsOf(dump, cat);
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
+std::vector<std::byte> Document::AppendCatalogOpsUpdate(
+        const std::vector<std::byte>& working) const {
+    if (catalog_ops_.empty()) return working;
+    auto span = std::span<const std::byte>(working.data(), working.size());
+    foundation::trailer::Trailer trailer_bundle;
+    foundation::objects::Dump dump;
+    try {
+        trailer_bundle = foundation::trailer::Parse(span);
+        dump = foundation::objects::Parse(span);
+    } catch (const std::exception&) {
+        return working;
+    }
+    const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+    const auto* cat_in =
+        catalog ? std::get_if<foundation::objects::Dict>(&catalog->value.v) : nullptr;
+    if (cat_in == nullptr) return working;
+    foundation::objects::Dict cat = *cat_in;
+    for (const auto& op : catalog_ops_) ApplyCatalogOp(cat, dump, op);
+    foundation::pdf_writer_incremental::DirtyObject d{catalog->id, catalog->generation,
+                                                      foundation::objects::Value(std::move(cat))};
+    return foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(&d, 1));
+}
+
+int Document::EditStampsInternal(int page, const std::vector<StampEdit>& edits) {
+    namespace fo = foundation::objects;
+    if (!tree_ || edits.empty()) return 0;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto dump = fo::Parse(span);
+
+    std::vector<std::size_t> leaves;
+    if (page > 0) {
+        if (static_cast<std::size_t>(page) <= tree_->leaves.size())
+            leaves.push_back(static_cast<std::size_t>(page - 1));
+    } else {
+        for (std::size_t i = 0; i < tree_->leaves.size(); ++i) leaves.push_back(i);
+    }
+
+    int matched = 0;
+    std::vector<std::vector<std::byte>> bodies;
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    std::size_t total_streams = 0;
+    for (std::size_t leaf : leaves) {
+        const auto* page_obj = FindPageObj(dump, tree_->leaves[leaf].id);
+        const auto* page_dict = page_obj ? std::get_if<fo::Dict>(&page_obj->value.v) : nullptr;
+        if (page_dict == nullptr) continue;
+        std::vector<std::uint32_t> ids;
+        if (const auto* c = DictGet(*page_dict, "Contents")) {
+            if (const auto* r = std::get_if<fo::Ref>(&c->v)) ids.push_back(r->id);
+            else if (const auto* a = std::get_if<fo::Array>(&c->v))
+                for (const auto& it : a->items)
+                    if (const auto* rr = std::get_if<fo::Ref>(&it.v)) ids.push_back(rr->id);
+        }
+        total_streams += ids.size();
+        int index = 0;  // 0-based stamp index across the page's streams
+        for (std::uint32_t sid : ids) {
+            const auto* obj = FindPageObj(dump, sid);
+            const auto* stream = obj ? std::get_if<fo::Stream>(&obj->value.v) : nullptr;
+            if (stream == nullptr) continue;
+            std::vector<std::byte> decoded;
+            try {
+                decoded = StreamIsFlate(stream->header)
+                              ? foundation::flate::Decode(stream->body)
+                              : std::vector<std::byte>(stream->body.begin(), stream->body.end());
+            } catch (const std::exception&) {
+                continue;
+            }
+            std::string text(reinterpret_cast<const char*>(decoded.data()), decoded.size());
+            auto blocks = FindStampBlocks(text);
+            if (blocks.empty()) continue;
+            std::string out;
+            std::size_t cursor = 0;
+            bool changed = false;
+            for (auto& b : blocks) {
+                bool remove = false;
+                const StampBlock before = b;
+                for (const auto& e : edits) {
+                    const bool hit = e.by_id ? (e.key != 0 && b.id == e.key) : (index == e.key);
+                    if (!hit) continue;
+                    ++matched;
+                    switch (e.kind) {
+                        case StampEdit::Kind::Delete: remove = true; break;
+                        case StampEdit::Kind::Hide: b.hidden = true; break;
+                        case StampEdit::Kind::Show: b.hidden = false; break;
+                        case StampEdit::Kind::Move:
+                            b.dx = e.x - b.x;
+                            b.dy = e.y - b.y;
+                            break;
+                    }
+                }
+                ++index;
+                out += text.substr(cursor, b.begin - cursor);
+                if (!remove) {
+                    const bool same = b.hidden == before.hidden && b.dx == before.dx &&
+                                      b.dy == before.dy;
+                    out += same ? text.substr(b.begin, b.end - b.begin)
+                                : StampHeader(b) +
+                                      text.substr(b.body_begin, b.end - b.body_begin);
+                    if (!same) changed = true;
+                } else {
+                    changed = true;
+                }
+                cursor = b.end;
+            }
+            out += text.substr(cursor);
+            if (!changed) continue;
+            fo::Dict header = stream->header;
+            SigErase(header, "Filter");
+            SigErase(header, "DecodeParms");
+            SigErase(header, "Length");
+            bodies.emplace_back(reinterpret_cast<const std::byte*>(out.data()),
+                                reinterpret_cast<const std::byte*>(out.data()) + out.size());
+            fo::Stream sv;
+            sv.header = std::move(header);
+            dirty.push_back(foundation::pdf_writer_incremental::DirtyObject{
+                sid, obj->generation, fo::Value(std::move(sv))});
+        }
+    }
+    if (dirty.empty()) return matched;
+    // Bodies are stable now: point each stream at its buffer.
+    for (std::size_t i = 0; i < dirty.size(); ++i)
+        std::get<fo::Stream>(dirty[i].value.v).body =
+            std::span<const std::byte>(bodies[i].data(), bodies[i].size());
+    (void)total_streams;
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+                  dirty.data(), dirty.size()));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(std::span<const std::byte>(bytes_.data(), bytes_.size())));
+    page_annotations_.clear();
+    return matched;
 }
 
 void Document::RemoveUsageRightsInternal() {

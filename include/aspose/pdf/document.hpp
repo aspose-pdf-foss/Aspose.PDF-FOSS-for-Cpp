@@ -90,6 +90,28 @@ public:
         double x = 0.0;
         double y = 0.0;
         double size = 12.0;
+        int stamp_id = 0;   // PdfFileStamp::StampId (0 = none)
+    };
+
+    // A staged catalog edit applied at Save (backs PdfContentEditor):
+    // a ViewerPreference flag, a document JavaScript action ("DO" =
+    // /OpenAction, else a catalog /AA trigger), or removing /OpenAction.
+    struct CatalogOp {
+        enum class Kind { ViewerFlag, JavaScriptAction, RemoveOpenAction };
+        Kind kind = Kind::ViewerFlag;
+        int flag = 0;
+        std::string trigger;
+        std::string javascript;
+    };
+
+    // One stamp edit (backs PdfContentEditor stamp methods): by StampId
+    // or by 0-based index on the page.
+    struct StampEdit {
+        enum class Kind { Delete, Hide, Show, Move };
+        Kind kind = Kind::Delete;
+        bool by_id = true;
+        int key = 0;
+        double x = 0.0, y = 0.0;   // Move: the stamp's new lower-left corner
     };
 
     // One digital-signature request (backs PdfFileSignature::Sign). All
@@ -739,6 +761,20 @@ private:
     // Drop /Perms /UR3 and /UR (usage rights) from the catalog.
     void RemoveUsageRightsInternal();
 
+    // Stage a catalog edit for Save; the ViewerPreference flags of the
+    // catalog with the staged edits applied.
+    void StageCatalogOpInternal(CatalogOp op);
+    // Attach the file at `path` (bytes read now; named by its file name).
+    // Throws std::runtime_error when it cannot be read.
+    void AddAttachmentInternal(const std::string& path, const std::string& description);
+    int ViewerPreferenceInternal() const;
+    std::vector<std::byte> AppendCatalogOpsUpdate(
+        const std::vector<std::byte>& working) const;
+
+    // Apply stamp edits to the stamps PdfFileStamp wrote on page `page`
+    // (1-based; 0 = every page). Returns how many stamps matched.
+    int EditStampsInternal(int page, const std::vector<StampEdit>& edits);
+
     // Replace the literal `(src)` text operand with `(dest)` in the
     // content stream(s) of the given page (1-based; 0 = all pages).
     // Decodes FlateDecode content, does a literal `(src)`→`(dest)`
@@ -861,6 +897,7 @@ private:
     bool is_encrypted_ = false;
     // How an encrypted document was opened: with the owner password, and
     // whether it has a non-empty user (open) password at all.
+    std::vector<CatalogOp> catalog_ops_;
     bool opened_as_owner_ = false;
     bool has_user_password_ = false;
     std::vector<std::byte> file_key_;

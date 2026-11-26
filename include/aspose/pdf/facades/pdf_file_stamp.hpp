@@ -58,7 +58,7 @@ public:
     PdfFileStamp(Aspose::Pdf::Document& document,
                  const std::string& outputFile);
 
-    // ---- Stamping (v1 stubs) ----
+    // ---- Stamping (text stamps tagged with StampId; see PdfContentEditor) ----
 
     void AddPageNumber(const std::string& format);
     void AddPageNumber(const std::string& format, int startingNumber);

@@ -66,6 +66,7 @@ void PdfFileStamp::DrawHeader(const std::string& text, float topMargin,
         r.y = document_->PageHeightInternal(static_cast<std::size_t>(i)) -
               topMargin;
         r.size = 12.0;
+        r.stamp_id = stamp_id_;
         stamps.push_back(std::move(r));
     }
     document_->ApplyTextStamps(stamps);
@@ -83,6 +84,7 @@ void PdfFileStamp::DrawFooter(const std::string& text, float bottomMargin,
         r.x = leftMargin;
         r.y = bottomMargin;
         r.size = 12.0;
+        r.stamp_id = stamp_id_;
         stamps.push_back(std::move(r));
     }
     document_->ApplyTextStamps(stamps);
@@ -103,6 +105,7 @@ void PdfFileStamp::DrawPageNumber(const std::string& format, int startingNumber,
                         static_cast<std::size_t>(i)) / 2.0 - 20.0;
         r.y = (y >= 0.0f) ? y : 30.0;
         r.size = 12.0;
+        r.stamp_id = stamp_id_;
         stamps.push_back(std::move(r));
     }
     document_->ApplyTextStamps(stamps);

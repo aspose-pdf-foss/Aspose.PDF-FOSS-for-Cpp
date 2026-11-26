@@ -51,34 +51,7 @@ TEST(FacadesPdfContentEditorSmoke, ReplaceTextStubsReturnFalse) {
     EXPECT_FALSE(editor.ReplaceText("foo", "bar"));
     EXPECT_FALSE(editor.ReplaceText("foo", 1, "bar"));
     EXPECT_FALSE(editor.ReplaceText("foo", "bar", 1));
-    EXPECT_THROW(editor.GetViewerPreference(), std::logic_error);
-}
-
-TEST(FacadesPdfContentEditorSmoke, UnimplementedEditorsThrow) {
-    Document doc{HelloWorldPdf()};
-    PdfContentEditor editor{doc};
-
-    EXPECT_THROW(editor.AddDocumentAttachment("file.dat", "desc"), std::logic_error);
-    EXPECT_THROW(editor.DeleteAttachments(), std::logic_error);
-    EXPECT_THROW(editor.AddDocumentAdditionalAction(PdfContentEditor::DocumentOpen,
-                                                    "app.alert('hi')"),
-                 std::logic_error);
-    EXPECT_THROW(editor.RemoveDocumentOpenAction(), std::logic_error);
-    EXPECT_THROW(editor.ChangeViewerPreference(1), std::logic_error);
-    EXPECT_THROW(editor.ReplaceImage(1, 1, "img.png"), std::logic_error);
-    EXPECT_THROW(editor.DeleteStamp(1, std::vector<int>{1}), std::logic_error);
-    EXPECT_THROW(editor.DeleteStampByIds(std::vector<int>{1, 2}), std::logic_error);
-    EXPECT_THROW(editor.DeleteStampByIds(1, std::vector<int>{1}), std::logic_error);
-    EXPECT_THROW(editor.DeleteStampById(1, 2), std::logic_error);
-    EXPECT_THROW(editor.DeleteStampById(3), std::logic_error);
-    EXPECT_THROW(editor.HideStampById(1, 2), std::logic_error);
-    EXPECT_THROW(editor.ShowStampById(1, 2), std::logic_error);
-    EXPECT_THROW(editor.MoveStampById(1, 2, 10.0, 20.0), std::logic_error);
-    EXPECT_THROW(editor.MoveStamp(1, 2, 10.0, 20.0), std::logic_error);
-
-    // Image deletion works.
-    editor.DeleteImage(1, std::vector<int>{1, 2});
-    editor.DeleteImage();
+    EXPECT_EQ(editor.GetViewerPreference(), 0);  // none set
 }
 
 TEST(FacadesPdfContentEditorSmoke, SavePassesThrough) {

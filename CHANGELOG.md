@@ -11,6 +11,16 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `PdfContentEditor` editors that used to do nothing: `AddDocumentAttachment` /
+  `DeleteAttachments`; `AddDocumentAdditionalAction` (JavaScript on document open — the
+  `/OpenAction` — close, save and print events) and `RemoveDocumentOpenAction`;
+  `ChangeViewerPreference` / `GetViewerPreference` with the new `ViewerPreference` flags (page
+  layout and mode, toolbar / menu / window UI, direction, duplex, print scaling; every set flag
+  is applied); `ReplaceImage`; and stamp editing — `DeleteStamp`, `DeleteStampById[s]`,
+  `HideStampById` / `ShowStampById`, `MoveStamp` / `MoveStampById` — for the stamps
+  `PdfFileStamp` draws, which now carry their `StampId`. Stamp indexes are 0-based and Move*
+  takes the stamp's new lower-left corner (the parameters were `offsetX` / `offsetY`).
+
 - Digital signatures with your own certificate: `PdfFileSignature::Sign` / `Certify` sign with the
   RSA or EC key (ECDSA on P-256 / P-384 / P-521, with SHA-256 / 384 / 512 and RFC 6979
   deterministic nonces) in a PKCS#12 file, either the `Signature(pfx, password)` one or the one from
@@ -76,8 +86,7 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
   `PdfAnnotationEditor` XFDF / FDF / PDF import and `ModifyAnnotations[Author]`;
-  `PdfBookmarkEditor` XML / HTML import and export; `PdfContentEditor` attachments, document
-  actions, viewer preferences, `ReplaceImage` and stamp edits; `PdfPageEditor::MovePosition` /
+  `PdfBookmarkEditor` XML / HTML import and export; `PdfPageEditor::MovePosition` /
   `ApplyChanges`; `Form::MakeFormAnnotationsIndependent` / `GetFieldsInRect`;
   `CheckboxField::AddOption` / `Clone` (no longer `noexcept`);
   `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;

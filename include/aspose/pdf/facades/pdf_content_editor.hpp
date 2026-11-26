@@ -5,10 +5,15 @@
 // attachment / text editor. Mirrors canonical
 // Aspose.Pdf.Facades.PdfContentEditor; extends SaveableFacade.
 //
-// v1 baseline: the content-edit + text-replace + link/annotation-create
-// render paths are not yet wired below the facade, so the operations are
-// surface-complete stubs (ReplaceText returns false; the void editors
-// no-op). The 6 document-action trigger constants are real.
+// Attachments, document JavaScript actions, viewer preferences (see
+// ViewerPreference), image replacement / deletion, text replacement and
+// stamp edits. Catalog edits (actions, viewer preferences) and attachments
+// are written at Save; image, text and stamp edits rewrite the bound
+// document at once.
+//
+// Stamps: the stamps PdfFileStamp draws (headers, footers, page numbers)
+// carry their StampId; these methods find, delete, hide / show and move
+// them. Stamps made by other tools are not recognised.
 //
 // The bulk of the canonical surface drops in cpp: every Create*/Draw*
 // overload routes through System.Drawing.Rectangle / System.Drawing.Color
@@ -49,43 +54,52 @@ public:
     PdfContentEditor() noexcept = default;
     explicit PdfContentEditor(Aspose::Pdf::Document& document);
 
-    // ---- Attachments (v1 stubs) ----
+    // ---- Attachments ----
+    // Embed the file at `path` (its file name is the attachment name).
     void AddDocumentAttachment(const std::string& path,
                                const std::string& description);
+    // Remove every attachment.
     void DeleteAttachments();
 
-    // ---- Document actions (v1 stubs) ----
+    // ---- Document actions ----
+    // JavaScript run on a document event: DocumentOpen ("DO") becomes the
+    // /OpenAction; the others go into the catalog /AA.
     void AddDocumentAdditionalAction(const std::string& actionName,
                                      const std::string& javaScript);
     void RemoveDocumentOpenAction();
 
-    // ---- Viewer preference (v1 stubs) ----
-    void ChangeViewerPreference(int pageLayout);
+    // ---- Viewer preference (ViewerPreference flags) ----
+    // Applies every flag set in `viewerAttribution`.
+    void ChangeViewerPreference(int viewerAttribution);
     int GetViewerPreference();
 
-    // ---- Image (DeleteImage real; ReplaceImage v1 stub) ----
+    // ---- Image ----
+    // Replace image `imageNum` (1-based) of page `pageNum` with the PNG /
+    // JPEG file `fileName`. Throws std::out_of_range for a bad index.
     void ReplaceImage(int pageNum, int imageNum, const std::string& fileName);
     void DeleteImage(int pageNum, const std::vector<int>& imageNum);
     void DeleteImage();
 
-    // ---- Text replace (v1 stubs) ----
+    // ---- Text replace ----
     bool ReplaceText(const std::string& srcText, const std::string& destText);
     bool ReplaceText(const std::string& srcText, int pageNum,
                      const std::string& destText);
     bool ReplaceText(const std::string& srcText, const std::string& destText,
                      int pageNum);
 
-    // ---- Stamps (v1 stubs) ----
-    void DeleteStamp(int pageNum, const std::vector<int>& stampId);
+    // ---- Stamps (by StampId, or by 0-based index on the page) ----
+    // An id of 0 means "no id" and matches nothing. Move* puts the stamp's
+    // lower-left corner at (x, y).
+    void DeleteStamp(int pageNum, const std::vector<int>& stampIndex);
     void DeleteStampByIds(const std::vector<int>& stampIds);
     void DeleteStampByIds(int pageNum, const std::vector<int>& stampIds);
     void DeleteStampById(int pageNum, int stampId);
     void DeleteStampById(int stampId);
     void HideStampById(int pageNum, int stampId);
     void ShowStampById(int pageNum, int stampId);
-    void MoveStampById(int pageNum, int stampId, double offsetX,
-                       double offsetY);
-    void MoveStamp(int pageNum, int stampId, double offsetX, double offsetY);
+    void MoveStampById(int pageNum, int stampId, double x, double y);
+    // Throws std::out_of_range when the page has no stamp at `stampIndex`.
+    void MoveStamp(int pageNum, int stampIndex, double x, double y);
 };
 
 }  // namespace Aspose::Pdf::Facades
