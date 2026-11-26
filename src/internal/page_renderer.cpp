@@ -2730,6 +2730,7 @@ constexpr int kShadingRampN = 256;
 
 struct RadialShading {
     bool valid = false;
+    bool axial = false;  // ShadingType 2: x0,y0 -> x0+dcx,y0+dcy (no radii)
     double x0 = 0.0, y0 = 0.0, r0 = 0.0;
     double dcx = 0.0, dcy = 0.0, dr = 0.0;     // (x1,y1,r1) - (x0,y0,r0)
     bool ext0 = false, ext1 = false;
@@ -2741,10 +2742,18 @@ RadialShading BuildRadialShading(const Dump& dump,
                                  const foundation::objects::Dict& sh) {
     RadialShading rs;
     const auto co = ReadDoubleArray(dump, DictGet(sh, "Coords"));
-    if (co.size() < 6) return rs;
-    rs.x0 = co[0]; rs.y0 = co[1]; rs.r0 = co[2];
-    const double x1 = co[3], y1 = co[4], r1 = co[5];
-    rs.dcx = x1 - rs.x0; rs.dcy = y1 - rs.y0; rs.dr = r1 - rs.r0;
+    rs.axial = DictNumber(dump, sh, "ShadingType", 0.0) == 2.0;
+    if (rs.axial) {
+        if (co.size() < 4) return rs;
+        rs.x0 = co[0]; rs.y0 = co[1];
+        rs.dcx = co[2] - co[0]; rs.dcy = co[3] - co[1];
+        if (rs.dcx * rs.dcx + rs.dcy * rs.dcy < 1e-12) return rs;
+    } else {
+        if (co.size() < 6) return rs;
+        rs.x0 = co[0]; rs.y0 = co[1]; rs.r0 = co[2];
+        const double x1 = co[3], y1 = co[4], r1 = co[5];
+        rs.dcx = x1 - rs.x0; rs.dcy = y1 - rs.y0; rs.dr = r1 - rs.r0;
+    }
     const auto dom = ReadDoubleArray(dump, DictGet(sh, "Domain"));
     const double t0 = dom.size() >= 2 ? dom[0] : 0.0;
     const double t1 = dom.size() >= 2 ? dom[1] : 1.0;
@@ -2781,6 +2790,29 @@ RadialShading BuildRadialShading(const Dump& dump,
 bool SampleRadialShading(const RadialShading& rs, double px, double py,
                          foundation::colorspace::ColorRgb& out) {
     const double pxr = px - rs.x0, pyr = py - rs.y0;
+    if (rs.axial) {
+        // Axial: project onto the axis, t = ((p - p0) . d) / |d|^2.
+        double t = (pxr * rs.dcx + pyr * rs.dcy) /
+                   (rs.dcx * rs.dcx + rs.dcy * rs.dcy);
+        if (t < 0.0) {
+            if (!rs.ext0) return false;
+            t = 0.0;
+        } else if (t > 1.0) {
+            if (!rs.ext1) return false;
+            t = 1.0;
+        }
+        const double f = t * (kShadingRampN - 1);
+        int lo = static_cast<int>(f);
+        if (lo > kShadingRampN - 1) lo = kShadingRampN - 1;
+        const int hi = lo < kShadingRampN - 1 ? lo + 1 : lo;
+        const double frac = f - lo;
+        const auto& A = rs.ramp[lo];
+        const auto& B = rs.ramp[hi];
+        out.r = A.r + (B.r - A.r) * frac;
+        out.g = A.g + (B.g - A.g) * frac;
+        out.b = A.b + (B.b - A.b) * frac;
+        return true;
+    }
     const double a = rs.dcx * rs.dcx + rs.dcy * rs.dcy - rs.dr * rs.dr;
     const double b = -2.0 * (pxr * rs.dcx + pyr * rs.dcy + rs.r0 * rs.dr);
     const double c = pxr * pxr + pyr * pyr - rs.r0 * rs.r0;
@@ -2827,9 +2859,9 @@ bool SampleRadialShading(const RadialShading& rs, double px, double py,
 }
 
 // Fill `path` with a PatternType 2 (shading) pattern: evaluate the
-// shading colour per pixel inside the path's coverage mask. Only
-// ShadingType 3 (radial) is supported (the only type in scope);
-// other shading types leave the path unpainted.
+// shading colour per pixel inside the path's coverage mask. ShadingType 2
+// (axial) and 3 (radial) are supported; other shading types leave the
+// path unpainted.
 void FillWithShadingPattern(
         Raster& dst, const Path& path, const Matrix& path_ctm,
         FillRule rule, const foundation::objects::Dict& pat_dict,
@@ -2847,8 +2879,9 @@ void FillWithShadingPattern(
         sd = std::get_if<foundation::objects::Dict>(&shr->v);
     }
     if (!sd) return;
-    if (DictNumber(dump, *sd, "ShadingType", 0.0) != 3.0) {
-        return;  // only radial (type 3) supported
+    const double shading_type = DictNumber(dump, *sd, "ShadingType", 0.0);
+    if (shading_type != 2.0 && shading_type != 3.0) {
+        return;  // only axial (2) and radial (3) supported
     }
     const Matrix sh_ctm = Compose(ReadMatrix(dump, pat_dict), page_ctm);
     const auto sh_inv = foundation::transform::Inverse(sh_ctm);

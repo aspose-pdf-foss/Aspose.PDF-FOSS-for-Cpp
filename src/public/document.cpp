@@ -48,6 +48,8 @@
 #include <aspose/pdf/cells.hpp>
 #include <aspose/pdf/drawing/circle.hpp>
 #include <aspose/pdf/drawing/ellipse.hpp>
+#include <aspose/pdf/drawing/gradient_axial_shading.hpp>
+#include <aspose/pdf/drawing/gradient_radial_shading.hpp>
 #include <aspose/pdf/drawing/graph.hpp>
 #include <aspose/pdf/drawing/line.hpp>
 #include <aspose/pdf/drawing/rectangle.hpp>
@@ -91,6 +93,7 @@
 #include "encrypt_writer.hpp"
 #include "flate.hpp"
 #include "objects.hpp"
+#include "standard14_metrics.hpp"
 #include "flate.hpp"
 #include "content_stream.hpp"
 #include "digest.hpp"
@@ -112,6 +115,7 @@
 #include <iterator>
 #include <set>
 #include <cctype>
+#include <map>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -1511,6 +1515,9 @@ void Document::Save(const std::string& outputFileName) const {
     bool paragraphs_dirty = false;
     for (const auto& slot : page_paragraphs_)
         if (slot && slot->Count() > 0) paragraphs_dirty = true;
+    for (const auto& bg : page_backgrounds_)
+        if (bg && (bg->PatternColorSpace() || bg->A() > 0.0))
+            paragraphs_dirty = true;
     // Images are dirty when a loaded page's collection has staged adds
     // (XImageCollection::Add) or had loaded images deleted (the surviving
     // loaded set is smaller than what was loaded).
@@ -2312,6 +2319,7 @@ std::optional<foundation::objects::Dict> BuildAnnotDict(
 namespace {
 // Defined later in this TU; used by the appearance-stream emitters below.
 foundation::objects::Value PageNameValue(const char* name);
+std::vector<std::byte> ReadFileBytes(const std::string& path);
 }  // namespace
 
 std::vector<std::byte> Document::AppendAnnotationsUpdate(
@@ -3167,6 +3175,56 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                 }
                 if (const auto* tx = dynamic_cast<const AN::TextAnnotation*>(ptr); tx && tx->Open())
                     annot_dict->entries.emplace_back("Open", foundation::objects::Value(true));
+                // FileAttachment: /FS (required) — a file specification with the
+                // file embedded — and the icon /Name.
+                if (const auto* fa = dynamic_cast<const AN::FileAttachmentAnnotation*>(ptr)) {
+                    namespace fo = foundation::objects;
+                    const auto& spec = fa->File();
+                    const std::vector<std::byte> data =
+                        !spec.content_.empty() ? spec.content_ : ReadFileBytes(spec.Name());
+                    std::string fname = spec.UnicodeName();
+                    if (fname.empty())
+                        fname = std::filesystem::path(spec.Name()).filename().string();
+                    auto str_v = [](const std::string& v) {
+                        fo::String ps;
+                        ps.bytes = EncodePdfString(v);
+                        ps.kind = fo::StringKind::Literal;
+                        return fo::Value(std::move(ps));
+                    };
+                    auto add_obj = [&](fo::Value v) {
+                        const std::uint32_t id = next_id++;
+                        foundation::pdf_writer_incremental::DirtyObject d;
+                        d.id = id; d.generation = 0; d.value = std::move(v);
+                        dirty.push_back(std::move(d));
+                        return id;
+                    };
+                    fo::Dict fsd;
+                    fsd.entries.emplace_back("Type", PageNameValue("Filespec"));
+                    fsd.entries.emplace_back("F", str_v(fname));
+                    fsd.entries.emplace_back("UF", str_v(fname));
+                    if (!spec.Description().empty())
+                        fsd.entries.emplace_back("Desc", str_v(spec.Description()));
+                    if (!data.empty()) {
+                        ap_bodies.push_back(std::make_unique<std::vector<std::byte>>(data));
+                        fo::Stream st;
+                        st.header.entries.emplace_back("Type", PageNameValue("EmbeddedFile"));
+                        st.body = std::span<const std::byte>(ap_bodies.back()->data(),
+                                                             ap_bodies.back()->size());
+                        fo::Dict efd;
+                        efd.entries.emplace_back("F", fo::Value(fo::Ref{add_obj(fo::Value(std::move(st))), 0}));
+                        fsd.entries.emplace_back("EF", fo::Value(std::move(efd)));
+                    }
+                    annot_dict->entries.emplace_back(
+                        "FS", fo::Value(fo::Ref{add_obj(fo::Value(std::move(fsd))), 0}));
+                    const char* icon = "PushPin";
+                    switch (fa->Icon()) {
+                        case AN::FileIcon::Graph: icon = "Graph"; break;
+                        case AN::FileIcon::Paperclip: icon = "Paperclip"; break;
+                        case AN::FileIcon::Tag: icon = "Tag"; break;
+                        default: break;
+                    }
+                    annot_dict->entries.emplace_back("Name", PageNameValue(icon));
+                }
                 if (has_ap) {
                     set_arr("C", color_arr(cr, cg, cb));
                     const std::uint32_t apid = emit_annot_ap(
@@ -3690,6 +3748,7 @@ void Document::ShiftStagedPageState(std::size_t pos, std::size_t count) {
     };
     shift_slots(page_annotations_);
     shift_slots(page_paragraphs_);
+    shift_slots(page_backgrounds_);
     shift_slots(page_resources_);
     shift_slots(page_artifacts_);
 
@@ -4532,12 +4591,266 @@ void Document::ApplyTextStamps(const std::vector<TextStampReq>& stamps) {
 
 namespace {
 
-// Append a single stroked edge (black) when its GraphInfo has a width.
+// ---- Paint: flat colours, constant alpha and gradient patterns -------------
+
+// Resources one generated content stream needs for its paints: shading
+// patterns (indirect objects allocated from `next`) and ExtGState alphas.
+struct PaintCtx {
+    std::uint32_t* next = nullptr;
+    std::vector<foundation::pdf_writer_incremental::DirtyObject>* dirty = nullptr;
+    std::vector<std::pair<std::string, std::uint32_t>> patterns;
+    std::vector<std::pair<std::string, double>> fill_alpha;    // name -> /ca
+    std::vector<std::pair<std::string, double>> stroke_alpha;  // name -> /CA
+};
+
+struct Rgba {
+    double r = 0.0, g = 0.0, b = 0.0, a = 0.0;
+};
+
+}  // namespace
+
+// Component reads for the paint helpers (Color keeps them private).
+struct ColorAccess {
+    static Rgba Of(const Color& c) { return {c.r_, c.g_, c.b_, c.a_}; }
+};
+
+namespace {
+
+// Whether `c` paints anything as a fill: a gradient, or a non-transparent
+// flat colour. An empty Color (the default of every BackgroundColor /
+// FillColor) paints nothing.
+bool HasPaint(const Color& c) {
+    return c.PatternColorSpace() != nullptr || ColorAccess::Of(c).a > 0.0;
+}
+
+// A stroke colour explicitly made transparent (Color::Transparent(), or any
+// alpha-0 colour other than the default empty black) suppresses the stroke.
+bool IsExplicitlyTransparent(const Color& c) {
+    const Rgba v = ColorAccess::Of(c);
+    return c.PatternColorSpace() == nullptr && v.a <= 0.0 &&
+           (v.r != 0.0 || v.g != 0.0 || v.b != 0.0);
+}
+
+// Colour component with up to 4 decimals (FmtNum's 2 would shift a 0..255
+// channel by up to 1.3 levels).
+std::string ColorNum(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.4f", std::clamp(v, 0.0, 1.0));
+    std::string s = buf;
+    while (!s.empty() && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
+
+std::string RgbTriple(const Rgba& v) {
+    return ColorNum(v.r) + " " + ColorNum(v.g) + " " + ColorNum(v.b);
+}
+
+std::string AlphaGs(PaintCtx& ctx, double alpha, bool stroke) {
+    if (alpha >= 1.0 || alpha < 0.0) return {};
+    auto& list = stroke ? ctx.stroke_alpha : ctx.fill_alpha;
+    const int pct = static_cast<int>(alpha * 1000.0 + 0.5);
+    const std::string name =
+        std::string(stroke ? "AspSA" : "AspFA") + std::to_string(pct);
+    bool have = false;
+    for (const auto& kv : list) have = have || kv.first == name;
+    if (!have) list.emplace_back(name, pct / 1000.0);
+    return "/" + name + " gs ";
+}
+
+foundation::objects::Value NumV(double d) {
+    foundation::objects::Value v;
+    v.v = d;
+    return v;
+}
+
+// Integer-valued entries (/PatternType, /ShadingType, /FunctionType, /N)
+// must be written as integers: poppler rejects "2.0" there.
+foundation::objects::Value IntV(std::int64_t i) {
+    foundation::objects::Value v;
+    v.v = i;
+    return v;
+}
+
+foundation::objects::Value NumArrayV(std::initializer_list<double> nums) {
+    foundation::objects::Array a;
+    for (double d : nums) a.items.push_back(NumV(d));
+    foundation::objects::Value v;
+    v.v = std::move(a);
+    return v;
+}
+
+// Register a shading pattern for `pcs` filling the box (x0,y0)-(x1,y1) in
+// page space; returns its resource name, or "" for an unknown pattern kind.
+std::string AddGradientPattern(PaintCtx& ctx,
+                               const Aspose::Pdf::Drawing::PatternColorSpace& pcs,
+                               double x0, double y0, double x1, double y1) {
+    namespace dr = Aspose::Pdf::Drawing;
+    foundation::objects::Dict sh;
+    Rgba c0, c1;
+    if (const auto* ax = dynamic_cast<const dr::GradientAxialShading*>(&pcs)) {
+        c0 = ColorAccess::Of(ax->StartColor());
+        c1 = ColorAccess::Of(ax->EndColor());
+        double sx = ax->Start().X(), sy = ax->Start().Y();
+        double ex = ax->End().X(), ey = ax->End().Y();
+        if (sx == ex && sy == ey) {  // unset: left to right across the area
+            sx = 0.0; sy = (y1 - y0) / 2.0;
+            ex = x1 - x0; ey = sy;
+        }
+        sh.entries.emplace_back("ShadingType", IntV(2));
+        sh.entries.emplace_back(
+            "Coords", NumArrayV({x0 + sx, y0 + sy, x0 + ex, y0 + ey}));
+    } else if (const auto* ra =
+                   dynamic_cast<const dr::GradientRadialShading*>(&pcs)) {
+        c0 = ColorAccess::Of(ra->StartColor());
+        c1 = ColorAccess::Of(ra->EndColor());
+        double sx = ra->Start().X(), sy = ra->Start().Y();
+        double ex = ra->End().X(), ey = ra->End().Y();
+        double r0 = ra->StartingRadius(), r1 = ra->EndingRadius();
+        if (r0 == 0.0 && r1 == 0.0) {  // unset: centre out to the corners
+            sx = ex = (x1 - x0) / 2.0;
+            sy = ey = (y1 - y0) / 2.0;
+            r1 = std::sqrt(sx * sx + sy * sy);
+        }
+        sh.entries.emplace_back("ShadingType", IntV(3));
+        sh.entries.emplace_back(
+            "Coords",
+            NumArrayV({x0 + sx, y0 + sy, r0, x0 + ex, y0 + ey, r1}));
+    } else {
+        return {};
+    }
+    sh.entries.emplace_back("ColorSpace", PageNameValue("DeviceRGB"));
+    {
+        foundation::objects::Dict fn;
+        fn.entries.emplace_back("FunctionType", IntV(2));
+        fn.entries.emplace_back("Domain", NumArrayV({0.0, 1.0}));
+        fn.entries.emplace_back("C0", NumArrayV({c0.r, c0.g, c0.b}));
+        fn.entries.emplace_back("C1", NumArrayV({c1.r, c1.g, c1.b}));
+        fn.entries.emplace_back("N", IntV(1));
+        foundation::objects::Value fv;
+        fv.v = std::move(fn);
+        sh.entries.emplace_back("Function", std::move(fv));
+    }
+    {
+        foundation::objects::Array ext;
+        foundation::objects::Value t;
+        t.v = true;
+        ext.items.push_back(t);
+        ext.items.push_back(t);
+        foundation::objects::Value ev;
+        ev.v = std::move(ext);
+        sh.entries.emplace_back("Extend", std::move(ev));
+    }
+    foundation::objects::Dict pat;
+    pat.entries.emplace_back("Type", PageNameValue("Pattern"));
+    pat.entries.emplace_back("PatternType", IntV(2));
+    foundation::objects::Value shv;
+    shv.v = std::move(sh);
+    pat.entries.emplace_back("Shading", std::move(shv));
+
+    const std::uint32_t id = (*ctx.next)++;
+    foundation::pdf_writer_incremental::DirtyObject d;
+    d.id = id;
+    d.generation = 0;
+    d.value.v = std::move(pat);
+    ctx.dirty->push_back(std::move(d));
+    const std::string name = "AspGrad" + std::to_string(id);
+    ctx.patterns.emplace_back(name, id);
+    return name;
+}
+
+// Operators selecting `c` as the fill paint for an area spanning the page-
+// space box (x0,y0)-(x1,y1) (the box positions a gradient).
+std::string FillPaintOps(const Color& c, double x0, double y0, double x1,
+                         double y1, PaintCtx& ctx) {
+    const Rgba v = ColorAccess::Of(c);
+    if (const auto& pcs = c.PatternColorSpace()) {
+        const std::string name = AddGradientPattern(ctx, *pcs, x0, y0, x1, y1);
+        if (!name.empty()) {
+            // An alpha set on the carrier Color fades the whole gradient;
+            // the default empty Color (alpha 0) means opaque.
+            const std::string gs = v.a > 0.0 ? AlphaGs(ctx, v.a, false) : "";
+            return gs + "/Pattern cs /" + name + " scn ";
+        }
+    }
+    return AlphaGs(ctx, v.a, false) + RgbTriple(v) + " rg ";
+}
+
+// Stroke colour operators; the default empty Color strokes black. A
+// gradient stroke uses its start colour (patterns are fills only here).
+std::string StrokePaintOps(const Color& c, PaintCtx* ctx) {
+    namespace dr = Aspose::Pdf::Drawing;
+    Rgba v = ColorAccess::Of(c);
+    if (const auto& pcs = c.PatternColorSpace()) {
+        if (const auto* ax = dynamic_cast<const dr::GradientAxialShading*>(pcs.get()))
+            v = ColorAccess::Of(ax->StartColor());
+        else if (const auto* ra =
+                     dynamic_cast<const dr::GradientRadialShading*>(pcs.get()))
+            v = ColorAccess::Of(ra->StartColor());
+        v.a = 1.0;
+    }
+    if (v.a <= 0.0) return "0 0 0 RG ";
+    const std::string gs = ctx != nullptr ? AlphaGs(*ctx, v.a, true) : "";
+    return gs + RgbTriple(v) + " RG ";
+}
+
+std::string DashOps(const Aspose::Pdf::GraphInfo& g) {
+    if (g.DashArray().empty()) return {};
+    std::string s = "[";
+    for (std::size_t i = 0; i < g.DashArray().size(); ++i)
+        s += (i ? " " : "") + std::to_string(g.DashArray()[i]);
+    return s + "] " + std::to_string(g.DashPhase()) + " d ";
+}
+
+// Merge the patterns / alphas collected in `ctx` into `resources`.
+void MergePaintResources(foundation::objects::Dict& resources,
+                         const PaintCtx& ctx,
+                         const foundation::objects::Dump& dump) {
+    auto take = [&](const char* key) {
+        foundation::objects::Dict d;
+        for (auto it = resources.entries.begin(); it != resources.entries.end();) {
+            if (it->first == key) {
+                d = ResolveDictCopy(it->second, dump);
+                it = resources.entries.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return d;
+    };
+    if (!ctx.patterns.empty()) {
+        foundation::objects::Dict pats = take("Pattern");
+        for (const auto& [name, id] : ctx.patterns)
+            pats.entries.emplace_back(
+                name, foundation::objects::Value{foundation::objects::Ref{id, 0}});
+        resources.entries.emplace_back("Pattern",
+                                       foundation::objects::Value{std::move(pats)});
+    }
+    if (!ctx.fill_alpha.empty() || !ctx.stroke_alpha.empty()) {
+        foundation::objects::Dict gss = take("ExtGState");
+        auto add = [&](const std::string& name, const char* key, double a) {
+            for (const auto& kv : gss.entries)
+                if (kv.first == name) return;
+            foundation::objects::Dict g;
+            g.entries.emplace_back("Type", PageNameValue("ExtGState"));
+            g.entries.emplace_back(key, NumV(a));
+            gss.entries.emplace_back(name, foundation::objects::Value{std::move(g)});
+        };
+        for (const auto& [n, a] : ctx.fill_alpha) add(n, "ca", a);
+        for (const auto& [n, a] : ctx.stroke_alpha) add(n, "CA", a);
+        resources.entries.emplace_back("ExtGState",
+                                       foundation::objects::Value{std::move(gss)});
+    }
+}
+
+// Append a single stroked edge when its GraphInfo has a width, in the
+// edge's colour (black by default) and dash pattern.
 void DrawEdge(std::string& body, const Aspose::Pdf::GraphInfo& g, double x1,
               double y1, double x2, double y2) {
-    if (g.LineWidth() <= 0.0f) return;
-    body += "q " + FmtNum(g.LineWidth()) + " w 0 0 0 RG " + FmtNum(x1) + " " +
-            FmtNum(y1) + " m " + FmtNum(x2) + " " + FmtNum(y2) + " l S Q\n";
+    if (g.LineWidth() <= 0.0f || IsExplicitlyTransparent(g.Color())) return;
+    body += "q " + FmtNum(g.LineWidth()) + " w " + StrokePaintOps(g.Color(), nullptr) +
+            DashOps(g) + FmtNum(x1) + " " + FmtNum(y1) + " m " + FmtNum(x2) +
+            " " + FmtNum(y2) + " l S Q\n";
 }
 
 // Emit an ellipse outline (4 cubic Béziers) into the content body.
@@ -4558,43 +4871,87 @@ void EmitEllipse(std::string& body, double cx, double cy, double rx,
             pt(cx + rx, cy) + "c ";
 }
 
-// Render a graph's shapes (Line / Rectangle / Circle / Ellipse), offset by the
-// graph's placement, stroked in black with each shape's line width.
+// Emit a rectangle path, with rounded corners when `r` > 0.
+void EmitRect(std::string& body, double x, double y, double w, double h,
+              double r) {
+    r = std::min(r, std::min(w, h) / 2.0);
+    if (r <= 0.0) {
+        body += FmtNum(x) + " " + FmtNum(y) + " " + FmtNum(w) + " " +
+                FmtNum(h) + " re ";
+        return;
+    }
+    const double k = 0.5522847498307936 * r;
+    auto pt = [](double a, double b) {
+        return FmtNum(a) + " " + FmtNum(b) + " ";
+    };
+    const double x1 = x + w, y1 = y + h;
+    body += pt(x + r, y) + "m " + pt(x1 - r, y) + "l ";
+    body += pt(x1 - r + k, y) + pt(x1, y + r - k) + pt(x1, y + r) + "c ";
+    body += pt(x1, y1 - r) + "l ";
+    body += pt(x1, y1 - r + k) + pt(x1 - r + k, y1) + pt(x1 - r, y1) + "c ";
+    body += pt(x + r, y1) + "l ";
+    body += pt(x + r - k, y1) + pt(x, y1 - r + k) + pt(x, y1 - r) + "c ";
+    body += pt(x, y + r) + "l ";
+    body += pt(x, y + r - k) + pt(x + r - k, y) + pt(x + r, y) + "c h ";
+}
+
+// Render a graph's shapes (Line / Rectangle / Circle / Ellipse), offset by
+// the graph's placement. Each shape's GraphInfo gives the stroke (colour,
+// width, dash; black 1 pt by default) and an optional fill — a flat colour,
+// a translucent one, or a gradient. A shape with a fill and LineWidth 0 is
+// filled without an outline.
 void DrawGraphShapes(std::string& body,
-                     const Aspose::Pdf::Drawing::Graph& graph) {
+                     const Aspose::Pdf::Drawing::Graph& graph, PaintCtx& ctx) {
+    namespace dr = Aspose::Pdf::Drawing;
     const double gx = graph.Left();
     const double gy = graph.Top();
     for (const auto& sp : graph.Shapes()) {
         if (sp == nullptr) continue;
-        const float lw = sp->GraphInfo().LineWidth();
-        const double w = lw > 0 ? lw : 1.0;
-        body += "q " + FmtNum(w) + " w 0 0 0 RG ";
-        if (const auto* ln =
-                dynamic_cast<const Aspose::Pdf::Drawing::Line*>(sp.get())) {
+        const Aspose::Pdf::GraphInfo& gi = sp->GraphInfo();
+        std::string path;
+        double bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+        bool closed = true;
+        if (const auto* ln = dynamic_cast<const dr::Line*>(sp.get())) {
             const auto& p = ln->PositionArray();
-            for (std::size_t i = 0; i + 1 < p.size(); i += 2) {
-                body += FmtNum(gx + p[i]) + " " + FmtNum(gy + p[i + 1]) +
+            for (std::size_t i = 0; i + 1 < p.size(); i += 2)
+                path += FmtNum(gx + p[i]) + " " + FmtNum(gy + p[i + 1]) +
                         (i == 0 ? " m " : " l ");
-            }
-            body += "S";
-        } else if (const auto* rc = dynamic_cast<
-                       const Aspose::Pdf::Drawing::Rectangle*>(sp.get())) {
-            body += FmtNum(gx + rc->Left()) + " " + FmtNum(gy + rc->Bottom()) +
-                    " " + FmtNum(rc->Width()) + " " + FmtNum(rc->Height()) +
-                    " re S";
-        } else if (const auto* ci = dynamic_cast<
-                       const Aspose::Pdf::Drawing::Circle*>(sp.get())) {
-            EmitEllipse(body, gx + ci->PosX(), gy + ci->PosY(), ci->Radius(),
-                        ci->Radius());
-            body += "S";
-        } else if (const auto* el = dynamic_cast<
-                       const Aspose::Pdf::Drawing::Ellipse*>(sp.get())) {
-            EmitEllipse(body, gx + el->Left() + el->Width() / 2.0,
-                        gy + el->Bottom() + el->Height() / 2.0,
+            closed = false;
+        } else if (const auto* rc = dynamic_cast<const dr::Rectangle*>(sp.get())) {
+            bx0 = gx + rc->Left();
+            by0 = gy + rc->Bottom();
+            bx1 = bx0 + rc->Width();
+            by1 = by0 + rc->Height();
+            EmitRect(path, bx0, by0, rc->Width(), rc->Height(),
+                     rc->RoundedCornerRadius());
+        } else if (const auto* ci = dynamic_cast<const dr::Circle*>(sp.get())) {
+            const double cx = gx + ci->PosX(), cy = gy + ci->PosY();
+            const double r = ci->Radius();
+            bx0 = cx - r; by0 = cy - r; bx1 = cx + r; by1 = cy + r;
+            EmitEllipse(path, cx, cy, r, r);
+        } else if (const auto* el = dynamic_cast<const dr::Ellipse*>(sp.get())) {
+            bx0 = gx + el->Left();
+            by0 = gy + el->Bottom();
+            bx1 = bx0 + el->Width();
+            by1 = by0 + el->Height();
+            EmitEllipse(path, (bx0 + bx1) / 2.0, (by0 + by1) / 2.0,
                         el->Width() / 2.0, el->Height() / 2.0);
-            body += "S";
+        } else {
+            continue;
         }
-        body += " Q\n";
+        if (path.empty()) continue;
+        const bool fill = closed && HasPaint(gi.FillColor());
+        const bool stroke = !IsExplicitlyTransparent(gi.Color()) &&
+                            !(fill && gi.LineWidth() <= 0.0f);
+        if (!fill && !stroke) continue;
+        std::string ops = "q ";
+        if (stroke) {
+            const double w = gi.LineWidth() > 0 ? gi.LineWidth() : 1.0;
+            ops += FmtNum(w) + " w " + StrokePaintOps(gi.Color(), &ctx) + DashOps(gi);
+        }
+        if (fill) ops += FillPaintOps(gi.FillColor(), bx0, by0, bx1, by1, ctx);
+        ops += path + (fill && stroke ? "B" : fill ? "f" : "S") + " Q\n";
+        body += ops;
     }
 }
 
@@ -4614,11 +4971,12 @@ double PageMediaHeight(const foundation::objects::Dict& page_dict) {
     return 792.0;
 }
 
-// Draw a FloatingBox's border frame. Placement: the box's Margin offsets it
-// from the top-left (defaulting to a 72-pt inset when unset); its child
-// paragraphs / background fill are deferred (the lib strokes in black).
+// Draw a FloatingBox: its background (flat colour or gradient) and border
+// frame — rounded when Border().RoundedBorderRadius() is set. Placement: the
+// box's Margin offsets it from the top-left (defaulting to a 72-pt inset when
+// unset); its child paragraphs are not laid out.
 void DrawFloatingBox(std::string& body, const Aspose::Pdf::FloatingBox& fb,
-                     double page_h) {
+                     double page_h, PaintCtx& ctx) {
     const double w = fb.Width();
     const double h = fb.Height();
     if (w <= 0.0 || h <= 0.0) return;
@@ -4628,6 +4986,23 @@ void DrawFloatingBox(std::string& body, const Aspose::Pdf::FloatingBox& fb,
     const double bottom = top - h;
     const double right = x + w;
     const Aspose::Pdf::BorderInfo& b = fb.Border();
+    const double radius = b.RoundedBorderRadius();
+    if (HasPaint(fb.BackgroundColor())) {
+        body += "q " + FillPaintOps(fb.BackgroundColor(), x, bottom, right, top, ctx);
+        EmitRect(body, x, bottom, w, h, radius);
+        body += "f Q\n";
+    }
+    if (radius > 0.0) {
+        // A rounded frame is one path, stroked with the top edge's style.
+        const Aspose::Pdf::GraphInfo& g = b.Top();
+        if (g.LineWidth() > 0.0f && !IsExplicitlyTransparent(g.Color())) {
+            body += "q " + FmtNum(g.LineWidth()) + " w " +
+                    StrokePaintOps(g.Color(), &ctx) + DashOps(g);
+            EmitRect(body, x, bottom, w, h, radius);
+            body += "S Q\n";
+        }
+        return;
+    }
     DrawEdge(body, b.Left(), x, bottom, x, top);
     DrawEdge(body, b.Right(), right, bottom, right, top);
     DrawEdge(body, b.Top(), x, top, right, top);
@@ -4647,6 +5022,8 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
     bool any = false;
     for (const auto& slot : page_paragraphs_)
         if (slot && slot->Count() > 0) any = true;
+    for (const auto& bg : page_backgrounds_)
+        if (bg && HasPaint(*bg)) any = true;
     if (!any || !tree_) return working;
 
     auto span = std::span<const std::byte>(working.data(), working.size());
@@ -4683,10 +5060,60 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
     const std::uint32_t paras_root_id = FindPagesRootId(dump, tb.root_id);
     std::vector<foundation::objects::Value> continuation_kids;
 
+    // Further Standard-14 fonts for table cell text (base name -> object),
+    // created on first use; /AspHelv above stays the default.
+    std::map<std::string, std::uint32_t> std_fonts;
+    auto fontRes = [&](const std::string& base,
+                       std::vector<std::pair<std::string, std::uint32_t>>& used)
+        -> std::string {
+        if (base == "Helvetica") return "AspHelv";
+        auto it = std_fonts.find(base);
+        if (it == std_fonts.end()) {
+            const std::uint32_t id = next++;
+            foundation::objects::Dict font;
+            font.entries.emplace_back("Type", PageNameValue("Font"));
+            font.entries.emplace_back("Subtype", PageNameValue("Type1"));
+            font.entries.emplace_back("BaseFont", PageNameValue(base.c_str()));
+            foundation::pdf_writer_incremental::DirtyObject d;
+            d.id = id;
+            d.generation = 0;
+            d.value.v = std::move(font);
+            dirty.push_back(std::move(d));
+            it = std_fonts.emplace(base, id).first;
+        }
+        std::string name = "AspF";
+        for (char c : base)
+            if (std::isalnum(static_cast<unsigned char>(c))) name += c;
+        bool have = false;
+        for (const auto& u : used) have = have || u.first == name;
+        if (!have) used.emplace_back(name, it->second);
+        return name;
+    };
+    auto mergeFonts = [&](foundation::objects::Dict& fonts,
+                          const std::vector<std::pair<std::string, std::uint32_t>>& used) {
+        for (const auto& [name, id] : used) {
+            for (auto it = fonts.entries.begin(); it != fonts.entries.end();)
+                it = it->first == name ? fonts.entries.erase(it) : it + 1;
+            fonts.entries.emplace_back(
+                name, foundation::objects::Value{foundation::objects::Ref{id, 0}});
+        }
+    };
+
     std::vector<std::vector<std::byte>> bodies;
-    for (std::size_t leaf = 0; leaf < page_paragraphs_.size(); ++leaf) {
-        const auto& slot = page_paragraphs_[leaf];
-        if (!slot || slot->Count() == 0) continue;
+    const std::size_t leaf_count =
+        std::max(page_paragraphs_.size(), page_backgrounds_.size());
+    static const Aspose::Pdf::Paragraphs kNoParagraphs;
+    for (std::size_t leaf = 0; leaf < leaf_count; ++leaf) {
+        const Aspose::Pdf::Color* background =
+            leaf < page_backgrounds_.size() && page_backgrounds_[leaf] &&
+                    HasPaint(*page_backgrounds_[leaf])
+                ? page_backgrounds_[leaf].get()
+                : nullptr;
+        const Aspose::Pdf::Paragraphs* slot =
+            leaf < page_paragraphs_.size() && page_paragraphs_[leaf]
+                ? page_paragraphs_[leaf].get()
+                : &kNoParagraphs;
+        if (slot->Count() == 0 && background == nullptr) continue;
         if (leaf >= tree_->leaves.size()) continue;
         const std::uint32_t page_id = tree_->leaves[leaf].id;
         const auto* page_obj = FindPageObj(dump, page_id);
@@ -4694,9 +5121,38 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
             page_obj ? std::get_if<foundation::objects::Dict>(&page_obj->value.v)
                      : nullptr;
         if (page_dict == nullptr) continue;
-        const double page_h = PageMediaHeight(*page_dict);
+        // The page box: a SetPageSize / MediaBox staged in this session
+        // (applied by a later pass) wins over the saved one.
+        double mb[4] = {0.0, 0.0, 612.0, PageMediaHeight(*page_dict)};
+        for (const auto& kv : page_dict->entries) {
+            if (kv.first != "MediaBox") continue;
+            if (const auto* a = std::get_if<foundation::objects::Array>(&kv.second.v)) {
+                for (std::size_t i = 0; i < 4 && i < a->items.size(); ++i) {
+                    if (const auto* d = std::get_if<double>(&a->items[i].v)) mb[i] = *d;
+                    else if (const auto* n = std::get_if<std::int64_t>(&a->items[i].v))
+                        mb[i] = static_cast<double>(*n);
+                }
+            }
+        }
+        if (auto it = pending_mediabox_.find(leaf); it != pending_mediabox_.end())
+            for (int i = 0; i < 4; ++i) mb[i] = it->second[static_cast<std::size_t>(i)];
+        const double page_h = mb[3];
 
+        // `body` is drawn over the page's existing content; `under` (the
+        // page background, then graphs / boxes with a negative ZIndex) is
+        // drawn beneath it.
         std::string body;
+        std::string under;
+        std::string page_bg;  // own stream: stays the bottom layer
+        PaintCtx pctx;
+        pctx.next = &next;
+        pctx.dirty = &dirty;
+        std::vector<std::pair<std::string, std::uint32_t>> page_fonts;
+        if (background != nullptr) {
+            page_bg += "q " + FillPaintOps(*background, mb[0], mb[1], mb[2], mb[3], pctx) +
+                     FmtNum(mb[0]) + " " + FmtNum(mb[1]) + " " + FmtNum(mb[2] - mb[0]) +
+                     " " + FmtNum(mb[3] - mb[1]) + " re f Q\n";
+        }
         // Image XObjects created for cell backgrounds on this page (name→id),
         // merged into the page's /Resources /XObject below.
         std::vector<std::pair<std::string, std::uint32_t>> page_xobjs;
@@ -4704,12 +5160,12 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
             if (const auto* graph =
                     dynamic_cast<const Aspose::Pdf::Drawing::Graph*>(
                         &(*slot)[pi])) {
-                DrawGraphShapes(body, *graph);
+                DrawGraphShapes(graph->ZIndex() < 0 ? under : body, *graph, pctx);
                 continue;
             }
             if (const auto* fb = dynamic_cast<const Aspose::Pdf::FloatingBox*>(
                     &(*slot)[pi])) {
-                DrawFloatingBox(body, *fb, page_h);
+                DrawFloatingBox(fb->ZIndex() < 0 ? under : body, *fb, page_h, pctx);
                 continue;
             }
             const auto* table = dynamic_cast<const Table*>(&(*slot)[pi]);
@@ -4765,10 +5221,14 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
             // widen `maxRight`; return the row height. When `xobjs` is
             // non-null, cell background images are embedded as XObjects and
             // their (name, id) recorded for the page-resource merge.
+            double table_w = 0.0;
+            for (double w : cols) table_w += w;
             auto drawRow =
                 [&](std::string& target, int ri, double rowTop,
                     double& maxRight,
-                    std::vector<std::pair<std::string, std::uint32_t>>* xobjs)
+                    std::vector<std::pair<std::string, std::uint32_t>>* xobjs,
+                    PaintCtx& rctx,
+                    std::vector<std::pair<std::string, std::uint32_t>>& fonts_used)
                 -> double {
                 const Row& row = rows[ri];
                 const Cells& cs = row.Cells();
@@ -4785,6 +5245,26 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
                                   : 80.0;
                     }
                     const double cb = rowTop - row_h;
+                    // Background colour / gradient: the cell's, else the
+                    // row's, else the table's. Row and table gradients span
+                    // the row, not each cell.
+                    {
+                        const Aspose::Pdf::Color* bg = nullptr;
+                        double gx0 = cl, gx1 = cl + cw;
+                        if (HasPaint(cell.BackgroundColor())) {
+                            bg = &cell.BackgroundColor();
+                        } else if (HasPaint(row.BackgroundColor())) {
+                            bg = &row.BackgroundColor();
+                            gx0 = x; gx1 = x + std::max(table_w, cw);
+                        } else if (HasPaint(table->BackgroundColor())) {
+                            bg = &table->BackgroundColor();
+                            gx0 = x; gx1 = x + std::max(table_w, cw);
+                        }
+                        if (bg != nullptr)
+                            target += "q " + FillPaintOps(*bg, gx0, cb, gx1, cb + row_h, rctx) +
+                                      FmtNum(cl) + " " + FmtNum(cb) + " " + FmtNum(cw) +
+                                      " " + FmtNum(row_h) + " re f Q\n";
+                    }
                     // Background image (behind border + text).
                     if (xobjs != nullptr) {
                         const std::vector<std::byte> img = cellImageBytes(cell);
@@ -4847,11 +5327,55 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
                         DrawEdge(target, bi.Bottom(), cl, cb, cl + cw, cb);
                     }
                     if (!cell.text_.empty()) {
-                        const double tx = cl + pad;
-                        const double ty = cb + row_h - pad - fs * 0.8;
-                        target += "BT /AspHelv " + FmtNum(fs) + " Tf " +
-                                  FmtNum(tx) + " " + FmtNum(ty) + " Td (" +
-                                  EscapeContentLiteral(cell.text_) + ") Tj ET\n";
+                        // Text state: the cell's, else the row's, else the
+                        // table's — per property (font, size, colour).
+                        const Aspose::Pdf::Text::TextState* st[3] = {
+                            &cell.DefaultCellTextState(), &row.DefaultCellTextState(),
+                            &table->DefaultCellTextState()};
+                        double cfs = fs;
+                        for (const auto* t : st)
+                            if (t->FontSize() > 0.0f) { cfs = t->FontSize(); break; }
+                        std::string base = "Helvetica";
+                        for (const auto* t : st) {
+                            std::string n = t->Font().FontName();
+                            if (n.empty()) n = t->Font().BaseFont();
+                            if (!n.empty() &&
+                                foundation::standard14_metrics::GetDescriptor(n) != nullptr) {
+                                base = n;
+                                break;
+                            }
+                        }
+                        const Aspose::Pdf::Color* fg = nullptr;
+                        for (const auto* t : st)
+                            if (HasPaint(t->ForegroundColor())) { fg = &t->ForegroundColor(); break; }
+                        double text_w = 0.0;
+                        for (char ch : cell.text_)
+                            text_w += foundation::standard14_metrics::GetCharWidth(
+                                          base, std::string_view(&ch, 1)) * cfs / 1000.0;
+                        const auto& padding = table->DefaultCellPadding();
+                        const double padl = std::max(pad, padding.Left());
+                        const double padr = std::max(pad, padding.Right());
+                        double tx = cl + padl;
+                        if (cell.Alignment() == Aspose::Pdf::HorizontalAlignment::Center)
+                            tx = cl + (cw - text_w) / 2.0;
+                        else if (cell.Alignment() == Aspose::Pdf::HorizontalAlignment::Right)
+                            tx = cl + cw - padr - text_w;
+                        auto va = cell.VerticalAlignment();
+                        // A cell left at its default (Top) follows its row.
+                        if (va == Aspose::Pdf::VerticalAlignment::None ||
+                            va == Aspose::Pdf::VerticalAlignment::Top)
+                            va = row.VerticalAlignment();
+                        double ty = cb + row_h - pad - cfs * 0.8;
+                        if (va == Aspose::Pdf::VerticalAlignment::Center)
+                            ty = cb + row_h / 2.0 - cfs * 0.35;
+                        else if (va == Aspose::Pdf::VerticalAlignment::Bottom)
+                            ty = cb + pad + cfs * 0.25;
+                        const std::string fres = fontRes(base, fonts_used);
+                        target += "q " + (fg != nullptr ? FillPaintOps(*fg, cl, cb, cl + cw, cb + row_h, rctx)
+                                                       : std::string("0 g ")) +
+                                  "BT /" + fres + " " + FmtNum(cfs) + " Tf " + FmtNum(tx) + " " +
+                                  FmtNum(ty) + " Td (" + EscapeContentLiteral(cell.text_) +
+                                  ") Tj ET Q\n";
                     }
                     cl += cw;
                     col += span_n;
@@ -4880,7 +5404,7 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
                 if (table->IsBroken() && ri > 1 &&
                     (y - row_h) < bottom_margin)
                     break;  // overflow → continue on a new page
-                drawRow(body, ri, y, max_right, &page_xobjs);
+                drawRow(body, ri, y, max_right, &page_xobjs, pctx, page_fonts);
                 y -= row_h;
             }
             drawOuterBorder(body, y_top, y, max_right);
@@ -4892,17 +5416,21 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
             while (table->IsBroken() && ri <= row_count &&
                    paras_root_id != 0) {
                 std::string cbody;
+                PaintCtx cctx;
+                cctx.next = &next;
+                cctx.dirty = &dirty;
+                std::vector<std::pair<std::string, std::uint32_t>> cfonts;
                 double cmax_right = x;
                 const double cseg_top = page_h - 72.0;
                 double cy = cseg_top;
                 for (int h = 1; h <= rep; ++h)
-                    cy -= drawRow(cbody, h, cy, cmax_right, nullptr);
+                    cy -= drawRow(cbody, h, cy, cmax_right, nullptr, cctx, cfonts);
                 int rows_this_seg = 0;
                 for (; ri <= row_count; ++ri) {
                     const double row_h = rowHeight(ri);
                     if (rows_this_seg > 0 && (cy - row_h) < bottom_margin)
                         break;
-                    drawRow(cbody, ri, cy, cmax_right, nullptr);
+                    drawRow(cbody, ri, cy, cmax_right, nullptr, cctx, cfonts);
                     cy -= row_h;
                     ++rows_this_seg;
                 }
@@ -4942,9 +5470,11 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
                     fnt.entries.emplace_back(
                         "AspHelv", foundation::objects::Value{
                                        foundation::objects::Ref{font_id, 0}});
+                    mergeFonts(fnt, cfonts);
                     foundation::objects::Dict res;
                     res.entries.emplace_back(
                         "Font", foundation::objects::Value{std::move(fnt)});
+                    MergePaintResources(res, cctx, dump);
                     pg.entries.emplace_back(
                         "Resources", foundation::objects::Value{std::move(res)});
                     foundation::pdf_writer_incremental::DirtyObject d;
@@ -4957,24 +5487,30 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
                     foundation::objects::Ref{cpage_id, 0}});
             }
         }
-        if (body.empty()) continue;
+        if (body.empty() && under.empty() && page_bg.empty()) continue;
 
-        std::vector<std::byte> body_bytes;
-        body_bytes.reserve(body.size());
-        for (char c : body) body_bytes.push_back(static_cast<std::byte>(c));
-        bodies.push_back(std::move(body_bytes));
-
-        const std::uint32_t stream_id = next++;
-        {
+        auto addStream = [&](const std::string& text) -> std::uint32_t {
+            std::vector<std::byte> bytes;
+            bytes.reserve(text.size());
+            for (char c : text) bytes.push_back(static_cast<std::byte>(c));
+            bodies.push_back(std::move(bytes));
+            const std::uint32_t id = next++;
             foundation::objects::Stream sv;
             sv.body = std::span<const std::byte>(bodies.back().data(),
                                                  bodies.back().size());
             foundation::pdf_writer_incremental::DirtyObject d;
-            d.id = stream_id;
+            d.id = id;
             d.generation = 0;
             d.value.v = std::move(sv);
             dirty.push_back(std::move(d));
-        }
+            return id;
+        };
+        // The page's existing content runs between `under` (prepended) and
+        // `body` (appended); every generated shape is its own q ... Q.
+        const std::uint32_t bg_id = page_bg.empty() ? 0 : addStream(page_bg);
+        if (bg_id != 0) page_background_streams_.insert(bg_id);
+        const std::uint32_t under_id = under.empty() ? 0 : addStream(under);
+        const std::uint32_t stream_id = body.empty() ? 0 : addStream(body);
 
         foundation::objects::Dict updated = *page_dict;
         foundation::objects::Array contents;
@@ -4988,8 +5524,17 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
             else if (std::get_if<foundation::objects::Ref>(&existing->v))
                 contents.items.push_back(*existing);
         }
-        contents.items.push_back(
-            foundation::objects::Value{foundation::objects::Ref{stream_id, 0}});
+        if (under_id != 0)
+            contents.items.insert(
+                contents.items.begin(),
+                foundation::objects::Value{foundation::objects::Ref{under_id, 0}});
+        if (bg_id != 0)
+            contents.items.insert(
+                contents.items.begin(),
+                foundation::objects::Value{foundation::objects::Ref{bg_id, 0}});
+        if (stream_id != 0)
+            contents.items.push_back(
+                foundation::objects::Value{foundation::objects::Ref{stream_id, 0}});
         for (auto it = updated.entries.begin(); it != updated.entries.end();) {
             if (it->first == "Contents")
                 it = updated.entries.erase(it);
@@ -5015,6 +5560,7 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
         fonts.entries.emplace_back(
             "AspHelv", foundation::objects::Value{
                            foundation::objects::Ref{font_id, 0}});
+        mergeFonts(fonts, page_fonts);
         for (auto it = resources.entries.begin();
              it != resources.entries.end();) {
             if (it->first == "Font")
@@ -5024,6 +5570,8 @@ std::vector<std::byte> Document::AppendParagraphsUpdate(
         }
         resources.entries.emplace_back(
             "Font", foundation::objects::Value{std::move(fonts)});
+
+        MergePaintResources(resources, pctx, dump);
 
         // Merge cell-background image XObjects into /Resources /XObject.
         if (!page_xobjs.empty()) {
@@ -7403,6 +7951,10 @@ std::vector<std::byte> Document::AppendArtifactsUpdate(
                 if (size <= 0.0) size = 24.0;
                 std::snprintf(buf, sizeof(buf), "BT /AspHelv %.2f Tf 0 0 Td\n",
                               size);
+                // Text colour from the text state (black when unset).
+                const Color& fg = a.text_state_.ForegroundColor();
+                if (HasPaint(fg) && fg.PatternColorSpace() == nullptr)
+                    target += RgbTriple(ColorAccess::Of(fg)) + " rg\n";
                 target += buf;
                 target += "(" + EscapePdfLiteral(a.text_) + ") Tj ET\n";
                 uses_font = true;
@@ -7438,9 +7990,6 @@ std::vector<std::byte> Document::AppendArtifactsUpdate(
         // foreground stream.
         foundation::objects::Dict updated = *page_dict;
         foundation::objects::Array contents;
-        if (bg_id != 0)
-            contents.items.push_back(foundation::objects::Value{
-                foundation::objects::Ref{bg_id, 0}});
         const foundation::objects::Value* existing = nullptr;
         for (const auto& kv : page_dict->entries)
             if (kv.first == "Contents") existing = &kv.second;
@@ -7450,6 +7999,19 @@ std::vector<std::byte> Document::AppendArtifactsUpdate(
                 for (const auto& it : arr->items) contents.items.push_back(it);
             else if (std::get_if<foundation::objects::Ref>(&existing->v))
                 contents.items.push_back(*existing);
+        }
+        if (bg_id != 0) {
+            // Behind the existing content, but above a Page::Background
+            // painted earlier in this Save.
+            std::size_t at = 0;
+            while (at < contents.items.size()) {
+                const auto* r = std::get_if<foundation::objects::Ref>(&contents.items[at].v);
+                if (r == nullptr || !page_background_streams_.count(r->id)) break;
+                ++at;
+            }
+            contents.items.insert(
+                contents.items.begin() + static_cast<std::ptrdiff_t>(at),
+                foundation::objects::Value{foundation::objects::Ref{bg_id, 0}});
         }
         if (fg_id != 0)
             contents.items.push_back(foundation::objects::Value{

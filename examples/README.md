@@ -124,7 +124,7 @@ PFX=../../tests/fixtures/pkcs12
 | `09_indexed_tiff.cpp` | `TiffSettings::Depth(ColorDepth::Format8bpp)` + `TiffDevice::Process(Page, std::ostream&)` — palettised TIFF (median-cut palette) | any |
 | `10_render_text_pdf.cpp` | `PngDevice::Process(Page, std::ostream&)` end-to-end on a text-bearing page (embedded TrueType font) | `text_hello.pdf` |
 | `11_render_standard14.cpp` | Same Process, but on a PDF that references `/Helvetica` without an embedded font program — exercises the `foundation::standard14_outlines` fallback (system font → bundled Liberation) | `hello_world.pdf` |
-| `12_create_features.cpp` | **From-scratch creation:** `Document` + `Pages().Add()` + `Save`; `Text::TextBuilder` (`AppendText` / `AppendParagraph`), `FontRepository::FindFont`; `Page::AddImage` (bundled `pdflib.png`); `Table` / `Row` / `Cell` (`ColSpan`); `Drawing::Graph` (`Line`/`Rectangle`/`Circle`/`Ellipse`); `WatermarkArtifact`; the annotation gallery (`Highlight`/`Underline`/`Squiggly`/`StrikeOut`/`Square`/`Circle`/`Line`/`Ink`/`Text`/`FreeText`/`Stamp`/`Link`/`FileAttachment`); AcroForm fields (`TextBox`/`Checkbox`/`RadioButton`/`ComboBox`/`ListBox`) + `Form::Flatten`; `Outlines` bookmarks (`XYZExplicitDestination`); document metadata on a new document | none (output only) |
+| `12_create_features.cpp` | **From-scratch creation:** `Document` + `Pages().Add()` + `Save`; `Text::TextBuilder` (`AppendText` / `AppendParagraph`), `FontRepository::FindFont`; `Page::AddImage` (bundled `pdflib.png`); `Table` / `Row` / `Cell` (`ColSpan`); `Drawing::Graph` (`Line`/`Rectangle`/`Circle`/`Ellipse`, fills, dashes, rounded corners, `ZIndex`); gradients (`GradientAxialShading` / `GradientRadialShading`), `Page::Background`; `FloatingBox`; `WatermarkArtifact`; the annotation gallery (`Highlight`/`Underline`/`Squiggly`/`StrikeOut`/`Square`/`Circle`/`Line`/`Ink`/`Text`/`FreeText`/`Stamp`/`Link`/`FileAttachment`); AcroForm fields (`TextBox`/`Checkbox`/`RadioButton`/`ComboBox`/`ListBox`) + `Form::Flatten`; `Outlines` bookmarks (`XYZExplicitDestination`); document metadata on a new document | none (output only) |
 | `13_sign_and_verify.cpp` | `Facades::PdfFileSignature` — `Sign` with `Forms::PKCS7(pfx, password)` (RSA or ECDSA key), `Save`, then `VerifySignature`, `GetSignerName`, `CoversWholeDocument` | any + a `.p12` (see `tests/fixtures/pkcs12`) |
 | `14_facades_edit.cpp` | `PdfFileStamp::StampId` + `AddFooter`; `PdfContentEditor` (`AddDocumentAttachment`, `AddDocumentAdditionalAction`, `ChangeViewerPreference`, `MoveStampById`); `PdfPageEditor` (`Zoom`, alignment, `ApplyChanges`); `PdfBookmarkEditor` (`CreateBookmarkOfPage`, `ExportBookmarksToXML`) | any |
 | `15_rich_media.cpp` | `Annotations::RichMediaAnnotation` — `SetContent`, `Type`, `ActivateOn`, `SetPoster`, `Update` | any + a media file |
@@ -139,12 +139,15 @@ PFX=../../tests/fixtures/pkcs12
 
 * **Example 12 is the only *creation* example** — every other one
   opens an existing PDF; 12 builds one from nothing and is the
-  natural counterpart to read with 01 / 04 / 07. It sets colours and
-  text decorations through the API for completeness, but the bundled
-  rasteriser paints monochrome line-art + black text + embedded
-  images + watermark, so the rendered result is black-on-white (open
-  the output in any viewer to see the full interactive structure:
-  form fields, annotations, bookmarks). It also sets
+  natural counterpart to read with 01 / 04 / 07. It is styled as a
+  small brochure in a pastel palette: a gradient `Page::Background`,
+  white rounded cards, translucent decorative circles and numbered
+  section chips are `Graph` shapes with a negative `ZIndex` (painted
+  under the text); the table header, the chart bars and the vector-
+  graphics page use gradient fills (`Color::PatternColorSpace` with
+  `Drawing::GradientAxialShading` / `GradientRadialShading`). Open the
+  output in a viewer to also use the interactive parts: form fields,
+  annotations, links, bookmarks. It also sets
   `Document::Info()` — a from-scratch document gets a new `/Info`
   object on save.
 

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include <aspose/pdf/color.hpp>
 #include <aspose/pdf/rectangle.hpp>
 #include <aspose/pdf/rotation.hpp>
 
@@ -112,6 +113,13 @@ public:
     // on first access; subsequent calls return the same instance
     // for the same (Document, leaf_index) pair.
     Annotations::AnnotationCollection& Annotations() const;
+
+    // Canonical Page.Background — a colour (or, through
+    // Color::PatternColorSpace, a gradient) painted over the whole page
+    // behind all of its content at Save. An empty Color (the default) means
+    // no background.
+    Aspose::Pdf::Color Background() const;
+    void Background(const Aspose::Pdf::Color& value);
 
     // Canonical Page.Paragraphs — the page's generated paragraphs (e.g.
     // Tables), rendered into the content stream at Save.

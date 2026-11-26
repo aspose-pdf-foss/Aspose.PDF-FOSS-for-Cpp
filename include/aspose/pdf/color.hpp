@@ -14,9 +14,16 @@
 // Color instance; the cost is one constexpr table lookup.
 // =============================================================================
 
+#include <memory>
+
+namespace Aspose::Pdf::Drawing {
+class PatternColorSpace;
+}
+
 namespace Aspose::Pdf {
 
 class Document;
+struct ColorAccess;  // internal: component reads for the Save pipeline
 
 class Color {
 public:
@@ -34,6 +41,15 @@ public:
 
     // Alpha-channel accessor (read-only; 0.0..1.0).
     double A() const noexcept;
+
+    // Canonical Color.PatternColorSpace — a gradient (GradientAxialShading /
+    // GradientRadialShading) painted instead of the flat colour wherever
+    // this Color is used as a fill: shape fills, table / cell / floating-box
+    // backgrounds and Page::Background. nullptr (the default) = flat colour.
+    const std::shared_ptr<Aspose::Pdf::Drawing::PatternColorSpace>&
+    PatternColorSpace() const noexcept;
+    void PatternColorSpace(
+        std::shared_ptr<Aspose::Pdf::Drawing::PatternColorSpace> value);
 
     // ---- Special static instances ---------------------------
 
@@ -190,6 +206,8 @@ private:
     // Save-through reads the RGB components to serialise annotation /C and to
     // paint generated /AP appearance streams in the authored colour.
     friend class Aspose::Pdf::Document;
+    friend struct Aspose::Pdf::ColorAccess;
+    std::shared_ptr<Aspose::Pdf::Drawing::PatternColorSpace> pattern_;
     double a_ = 0.0;
     double r_ = 0.0;
     double g_ = 0.0;

@@ -109,6 +109,19 @@ Annotations::AnnotationCollection& Page::Annotations() const {
     return *slot;
 }
 
+Aspose::Pdf::Color Page::Background() const {
+    const auto& slots = doc_->page_backgrounds_;
+    if (leaf_index_ < slots.size() && slots[leaf_index_])
+        return *slots[leaf_index_];
+    return Aspose::Pdf::Color{};
+}
+
+void Page::Background(const Aspose::Pdf::Color& value) {
+    auto& slots = doc_->page_backgrounds_;
+    if (slots.size() <= leaf_index_) slots.resize(leaf_index_ + 1);
+    slots[leaf_index_] = std::make_unique<Aspose::Pdf::Color>(value);
+}
+
 Aspose::Pdf::Paragraphs& Page::Paragraphs() const {
     auto& slots = doc_->page_paragraphs_;
     if (slots.size() <= leaf_index_) slots.resize(leaf_index_ + 1);

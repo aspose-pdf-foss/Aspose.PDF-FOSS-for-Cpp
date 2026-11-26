@@ -1,5 +1,7 @@
 #include <aspose/pdf/color.hpp>
 
+#include <utility>
+
 namespace Aspose::Pdf {
 
 // =============================================================================
@@ -29,6 +31,15 @@ Color Color::FromRgb(double r, double g, double b) noexcept {
 }
 
 double Color::A() const noexcept { return a_; }
+
+const std::shared_ptr<Aspose::Pdf::Drawing::PatternColorSpace>&
+Color::PatternColorSpace() const noexcept {
+    return pattern_;
+}
+void Color::PatternColorSpace(
+        std::shared_ptr<Aspose::Pdf::Drawing::PatternColorSpace> value) {
+    pattern_ = std::move(value);
+}
 
 // =============================================================================
 // Empty / Transparent statics.

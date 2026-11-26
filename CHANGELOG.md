@@ -11,6 +11,20 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- Gradient fills: `Color::PatternColorSpace` with the new `Drawing::GradientAxialShading` and
+  `Drawing::GradientRadialShading`, usable wherever a colour fills an area (graph shapes,
+  table / row / cell and floating-box backgrounds, `Page::Background`). The renderer now draws
+  axial (ShadingType 2) shadings as well as radial ones.
+- `Page::Background` — a colour or gradient painted behind all page content.
+- Generated content now honours the styling the API already exposed: `Graph` shape stroke colour,
+  width, dash pattern, fill (flat, translucent or gradient) and `Rectangle::RoundedCornerRadius`;
+  a negative `ZIndex` paints a graph or floating box under the page text; table, row and cell
+  `BackgroundColor`, border colours, cell text font / size / colour (from the cell, row or table
+  `DefaultCellTextState`), horizontal alignment and the row's vertical alignment;
+  `FloatingBox::BackgroundColor` and a rounded border (`BorderInfo::RoundedBorderRadius`);
+  the watermark text colour.
+- Example 12 redesigned as a pastel brochure using the above.
+
 - Examples 13 - 16: signing and verifying with a PKCS#12 certificate, the Facades editors
   (stamps, attachments, document actions, viewer preferences, page zoom, bookmark XML), embedded
   media (RichMedia) and fax (CCITT Group 4) TIFF output. Example notes no longer describe the
@@ -141,6 +155,11 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- A new `FileAttachmentAnnotation` was saved without its required `/FS` (so the file was not
+  attached and poppler rejected the annotation); it now carries a file specification with the file
+  embedded, and its icon (`/Name`).
+- A background watermark (`IsBackground`) added in the same Save as a page background is no longer
+  hidden under it.
 - Attachments and XMP metadata written at Save after an earlier incremental edit (for example a
   `PdfFileStamp` stamp) could reuse the ids of the objects that edit added, overwriting them: the
   trailer `/Size` read from a multi-revision file can be stale. New ids now also stay above every

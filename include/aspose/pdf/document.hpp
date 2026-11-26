@@ -1016,6 +1016,12 @@ private:
         std::unique_ptr<Aspose::Pdf::Annotations::AnnotationCollection>>
         page_annotations_;
     mutable std::vector<std::unique_ptr<Paragraphs>> page_paragraphs_;
+    // Page::Background per page leaf (null = none); painted by the
+    // paragraphs pass, behind the existing content.
+    mutable std::vector<std::unique_ptr<Color>> page_backgrounds_;
+    // Content streams written for Page::Background during the current Save
+    // (later passes keep them as the bottom layer).
+    mutable std::set<std::uint32_t> page_background_streams_;
     mutable std::vector<std::unique_ptr<Resources>> page_resources_;
     mutable std::vector<std::unique_ptr<ArtifactCollection>> page_artifacts_;
 };

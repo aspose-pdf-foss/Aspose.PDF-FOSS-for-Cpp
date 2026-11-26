@@ -79,6 +79,7 @@ set(ASPOSE_PDF_FOSS_SOURCES
   src/public/metadata.cpp
   src/public/document_privilege.cpp
   src/public/color.cpp
+  src/public/gradient_shading.cpp
   src/public/point.cpp
   src/public/rectangle.cpp
   src/public/margin_info.cpp
