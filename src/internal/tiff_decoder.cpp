@@ -1,5 +1,6 @@
 #include "tiff_decoder.hpp"
 
+#include "ccitt.hpp"
 #include "flate.hpp"
 #include "lzw.hpp"
 #include "runlength.hpp"
@@ -223,7 +224,28 @@ struct IfdEntry {
 // Decompress one strip per the file's Compression tag.
 [[nodiscard]] std::vector<std::byte> DecompressStrip(
         std::span<const std::byte> compressed,
-        std::uint16_t compression) {
+        std::uint16_t compression, std::uint32_t width = 0,
+        std::uint32_t rows = 0, std::uint32_t t4_options = 0) {
+    if (compression == kCompCcittRle || compression == kCompCcittT4 ||
+        compression == kCompCcittT6) {
+        // Bi-level fax coding: decode to 1bpp rows with 1 = white.
+        foundation::ccitt::Params p;
+        p.Columns = width;
+        p.Rows = rows;
+        p.BlackIs1 = true;  // rows with 1 = white (see tiff_encoder)
+        p.EndOfBlock = true;
+        if (compression == kCompCcittRle) {
+            p.K = 0;
+            p.EncodedByteAlign = true;
+        } else if (compression == kCompCcittT4) {
+            p.K = (t4_options & 1u) ? 1 : 0;
+            p.EndOfLine = true;
+            p.EncodedByteAlign = (t4_options & 4u) != 0;
+        } else {
+            p.K = -1;
+        }
+        return foundation::ccitt::Decode(compressed, p).bits;
+    }
     switch (compression) {
         case kCompNone:
             return std::vector<std::byte>(
@@ -254,10 +276,7 @@ void ValidateCompression(std::uint16_t compression) {
         case kCompCcittRle:
         case kCompCcittT4:
         case kCompCcittT6:
-            throw std::runtime_error(
-                "tiff_decoder: CCITT compression ("
-                + std::to_string(compression)
-                + ") is not supported (bilevel-only)");
+            return;  // bi-level only: checked with the photometric
         case kCompOldJpeg:
         case kCompJpeg:
             throw std::runtime_error(
@@ -358,6 +377,7 @@ DecodedImage Decode(std::span<const std::byte> input) {
     std::vector<std::uint32_t> strip_byte_counts;
     std::vector<std::uint32_t> color_map;
     std::vector<std::uint32_t> extra_samples;
+    std::uint32_t t4_options = 0;
 
     for (std::uint32_t i = 0; i < entry_count; ++i) {
         const std::size_t entry_off = entries_off + i * 12;
@@ -413,6 +433,9 @@ DecodedImage Decode(std::span<const std::byte> input) {
                 break;
             case kTagExtraSamples:
                 extra_samples = ReadIntegerArray(reader, entry);
+                break;
+            case 292:  // T4Options
+                t4_options = ReadSingleInteger(reader, entry);
                 break;
             case kTagPlanarConfig: {
                 const auto pc = ReadSingleInteger(reader, entry);
@@ -488,6 +511,23 @@ DecodedImage Decode(std::span<const std::byte> input) {
                 "tiff_decoder: heterogeneous BitsPerSample arrays "
                 "are not supported");
         }
+    }
+    // CCITT: 1bpp, WhiteIsZero or BlackIsZero; decoded rows use 1 = white,
+    // i.e. the BlackIsZero layout.
+    bool ccitt_invert = false;
+    const bool ccitt = compression == kCompCcittRle ||
+                       compression == kCompCcittT4 ||
+                       compression == kCompCcittT6;
+    if (ccitt) {
+        if (samples_per_pixel != 1 || bps != 1 ||
+            (photometric != kPhotoWhiteIsZero && photometric != kPhotoBlackIsZero))
+            throw std::runtime_error(
+                "tiff_decoder: CCITT compression needs a 1-bit "
+                "WhiteIsZero / BlackIsZero image");
+        // The coded runs decode to rows for WhiteIsZero (as libtiff reads
+        // them); a BlackIsZero fax page is the complement.
+        ccitt_invert = photometric == kPhotoBlackIsZero;
+        photometric = kPhotoBlackIsZero;
     }
     // bps value-set per (SPP, Photometric):
     //   SPP=1, BlackIsZero: bps ∈ {1, 8}
@@ -619,7 +659,9 @@ DecodedImage Decode(std::span<const std::byte> input) {
         const std::span<const std::byte> compressed{
             input.data() + strip_off, strip_len};
         std::vector<std::byte> decompressed = DecompressStrip(
-            compressed, compression);
+            compressed, compression, image_width, strip_rows, t4_options);
+        if (ccitt_invert)
+            for (auto& b : decompressed) b = ~b;
         if (decompressed.size() != expected_strip_bytes) {
             throw std::runtime_error(
                 "tiff_decoder: strip " + std::to_string(i)

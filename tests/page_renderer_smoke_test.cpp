@@ -681,6 +681,20 @@ TEST(PageRendererSmoke, ContentMultiFilter_Ascii85ThenFlate) {
 // the absolute CCITT / BlackIs1 polarity.
 // ---------------------------------------------------------------------------
 
+// Absolute polarity of the same image, as poppler (pdftoppm) renders it:
+// left half white, right half black.
+TEST(PageRendererSmoke, ImageCcitt_AbsolutePolarityMatchesPoppler) {
+    const auto pdf = FixtureRoot() / "image_ccitt_nodecode.pdf";
+    const auto bytes = ReadFile(pdf);
+    const auto page = foundation::page_renderer::Render(
+        std::span<const std::byte>(bytes.data(), bytes.size()), 0, 72.0);
+    const std::size_t y = page.height / 2;
+    const auto left = page.pixels[(y * page.width + page.width / 4) * 4u];
+    const auto right = page.pixels[(y * page.width + page.width * 3 / 4) * 4u];
+    EXPECT_GT(static_cast<int>(left), 200) << "left half should be white";
+    EXPECT_LT(static_cast<int>(right), 55) << "right half should be black";
+}
+
 TEST(PageRendererSmoke, ImageCcitt_DecodeArrayInvertsPolarity) {
     const auto load = [](const char* name) {
         const auto pdf = FixtureRoot() / name;

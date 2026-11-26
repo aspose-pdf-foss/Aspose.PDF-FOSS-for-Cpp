@@ -26,6 +26,12 @@ enum class Compression {
     Lzw,
     Deflate,
     PackBits,
+    // CCITT bi-level fax coding (tags 3 / 4): only with the 1bpp shape
+    // (BlackIsZero, 1, 1); the page is written WhiteIsZero, as fax TIFFs
+    // are. G3 is one-dimensional T.4 with an EOL per row (T4Options 0),
+    // G4 is T.6 (T6Options 0).
+    CcittG3,
+    CcittG4,
 };
 
 // Photometric interpretation for the on-wire pixel data.

@@ -11,6 +11,11 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `TiffDevice` writes `CompressionType::CCITT3` (T.4, one-dimensional) and `CCITT4` (T.6) TIFFs:
+  bi-level WhiteIsZero pages, whatever the colour depth setting — these used to throw. The TIFF
+  reader now decodes CCITT (Modified Huffman, Group 3, Group 4) in WhiteIsZero and BlackIsZero
+  files. Checked against libtiff: Pillow reads our files, and we read ImageMagick's.
+
 - `TextMarkupAnnotation::GetMarkedText`: the page text under the QuadPoints (lines separated by a
   newline, words by a space; character extents use the text extractor's 0.5 em estimate).
   Text-markup annotations loaded from a file now carry their QuadPoints, and the QuadPoints set

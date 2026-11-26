@@ -94,10 +94,8 @@ TEST(TiffDeviceE2E, OneBitDepth_StillValidTiff) {
     const auto pdf = FixtureRoot() / "red_rect.pdf";
     Aspose::Pdf::Document doc(pdf.string());
 
-    // 1bpp output via LZW. The FOSS build does not ship a CCITT
-    // encoder primitive (foundation::ccitt is decode-only), so
-    // CompressionType::CCITT3 / CCITT4 raise on Process; this
-    // test pins the supported 1bpp path instead.
+    // 1bpp output via LZW (CCITT is covered by
+    // tiff_ccitt_smoke_test).
     TiffSettings settings(CompressionType::LZW);
     settings.Depth(ColorDepth::Format1bpp);
     TiffDevice tiff(Aspose::Pdf::Devices::Resolution(72), settings);
@@ -108,20 +106,6 @@ TEST(TiffDeviceE2E, OneBitDepth_StillValidTiff) {
     const auto out = sink.str();
     ASSERT_GT(out.size(), 0u);
     EXPECT_TRUE(LooksLikeTiff(out));
-}
-
-TEST(TiffDeviceE2E, CCITT_RaisesClearError) {
-    using namespace Aspose::Pdf::Devices;
-    const auto pdf = FixtureRoot() / "red_rect.pdf";
-    Aspose::Pdf::Document doc(pdf.string());
-
-    TiffSettings settings(CompressionType::CCITT4);
-    settings.Depth(ColorDepth::Format1bpp);
-    TiffDevice tiff(Aspose::Pdf::Devices::Resolution(72), settings);
-
-    std::stringstream sink(std::ios::binary | std::ios::out | std::ios::in);
-    EXPECT_THROW(tiff.Process(doc.Pages()[1], sink),
-                 std::runtime_error);
 }
 
 TEST(TiffDeviceE2E, EightBitPalette_ProducesValidTiff) {

@@ -1,3 +1,4 @@
+#include "ccitt.hpp"
 #include "tiff_encoder.hpp"
 
 #include "flate.hpp"
@@ -175,6 +176,8 @@ struct IfdEntry {
         case Compression::Lzw:      return kCompLzw;
         case Compression::Deflate:  return kCompDeflate;
         case Compression::PackBits: return kCompPackBits;
+        case Compression::CcittG3:  return 3;
+        case Compression::CcittG4:  return 4;
     }
     Fail("internal: unknown Compression enum");
 }
@@ -209,8 +212,37 @@ struct IfdEntry {
             return foundation::flate::Encode(uncompressed);
         case Compression::PackBits:
             return foundation::runlength::Encode(uncompressed);
+        case Compression::CcittG3:
+        case Compression::CcittG4:
+            break;  // needs the page size: see CompressCcitt
     }
     Fail("internal: unknown Compression enum");
+}
+
+// CCITT coding of a 1bpp BlackIsZero raster (1 = white).
+[[nodiscard]] std::vector<std::byte> CompressCcitt(
+        std::span<const std::byte> bits, std::uint32_t width,
+        std::uint32_t height, Compression compression) {
+    foundation::ccitt::DecodedImage image;
+    image.width = width;
+    image.height = height;
+    image.bits.assign(bits.begin(), bits.end());
+    foundation::ccitt::Params params;
+    params.Columns = width;
+    params.Rows = height;
+    // Our rows use 1 = white; with BlackIs1 the coder treats 1-bits as
+    // white runs (checked against libtiff, which reads WhiteIsZero fax
+    // pages with white runs as 0 samples).
+    params.BlackIs1 = true;
+    if (compression == Compression::CcittG3) {
+        params.K = 0;
+        params.EndOfLine = true;
+        params.EndOfBlock = false;
+    } else {
+        params.K = -1;
+        params.EndOfBlock = true;
+    }
+    return foundation::ccitt::Encode(image, params);
 }
 
 // Photometric / SPP / BPS-driven sample preparation. Converts
@@ -415,10 +447,17 @@ std::vector<std::byte> Encode(std::span<const Page> pages,
         }
     }
 
+    const bool ccitt = options.compression == Compression::CcittG3 ||
+                       options.compression == Compression::CcittG4;
+    if (ccitt && !(options.photometric == Photometric::BlackIsZero &&
+                   options.samples_per_pixel == 1 &&
+                   options.bits_per_sample == 1))
+        Fail("CCITT compression needs the 1bpp (BlackIsZero, 1, 1) shape");
     const std::uint16_t compression_tag =
         CompressionTag(options.compression);
+    // CCITT pages are WhiteIsZero (0): white runs decode to 0.
     const std::uint16_t photometric_tag =
-        PhotometricTag(options.photometric);
+        ccitt ? std::uint16_t{0} : PhotometricTag(options.photometric);
     const std::uint16_t spp =
         static_cast<std::uint16_t>(options.samples_per_pixel);
     const bool emit_extrasamples =
@@ -445,8 +484,12 @@ std::vector<std::byte> Encode(std::span<const Page> pages,
             options.bits_per_sample);
 
         // 2b. Strip compression.
-        const auto compressed = CompressStrip(
-            std::span<const std::byte>(samples), options.compression);
+        const auto compressed =
+            ccitt ? CompressCcitt(std::span<const std::byte>(samples),
+                                  page.width, page.height,
+                                  options.compression)
+                  : CompressStrip(std::span<const std::byte>(samples),
+                                  options.compression);
         const std::uint32_t strip_offset =
             static_cast<std::uint32_t>(out.Pos());
         out.Bytes(compressed);
@@ -547,6 +590,12 @@ std::vector<std::byte> Encode(std::span<const Page> pages,
             entries.push_back(EntryOutOfLine(
                 kTagColorMap, kTypeShort,
                 color_map_count, color_map_offset));
+        }
+        if (ccitt) {
+            // T4Options (292) / T6Options (293): 0 — 1-D coding, no fill
+            // bits / no options.
+            entries.push_back(EntryLong1(
+                options.compression == Compression::CcittG3 ? 292 : 293, 0));
         }
         if (emit_extrasamples) {
             // ExtraSamples=2 (unassociated alpha) per §8.5.

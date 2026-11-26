@@ -35,8 +35,7 @@ namespace {
 // ---------------------------------------------------------------------------
 
 // Translate the public CompressionType enum to foundation's
-// Compression enum class. CCITT3/CCITT4 raise (no
-// foundation::ccitt::Encode primitive yet).
+// Compression enum class. CCITT3 / CCITT4 write bi-level fax pages.
 [[nodiscard]] foundation::tiff_encoder::Compression
 MapCompression(CompressionType c) {
     using foundation::tiff_encoder::Compression;
@@ -44,13 +43,8 @@ MapCompression(CompressionType c) {
         case CompressionType::None: return Compression::None;
         case CompressionType::LZW:  return Compression::Lzw;
         case CompressionType::RLE:  return Compression::PackBits;
-        case CompressionType::CCITT3:
-        case CompressionType::CCITT4:
-            throw std::runtime_error(
-                "TiffDevice: CCITT compression for TIFF encoding "
-                "is not supported in the FOSS build (no "
-                "foundation::ccitt::Encode primitive). Use "
-                "CompressionType::LZW, RLE, or None.");
+        case CompressionType::CCITT3: return Compression::CcittG3;
+        case CompressionType::CCITT4: return Compression::CcittG4;
     }
     return Compression::None;
 }
@@ -227,7 +221,12 @@ struct PreparedPage {
         ColorDepth depth,
         CompressionType compression,
         std::uint32_t dpi) {
-    const auto shape = ShapeFromDepth(depth);
+    // CCITT codes bi-level images: the page is rendered 1bpp whatever
+    // the colour depth setting.
+    const bool ccitt = compression == CompressionType::CCITT3 ||
+                       compression == CompressionType::CCITT4;
+    const auto shape = ccitt ? ShapeFromDepth(ColorDepth::Format1bpp)
+                             : ShapeFromDepth(depth);
 
     std::vector<foundation::tiff_encoder::Page> pages;
     pages.reserve(prepared.size());
