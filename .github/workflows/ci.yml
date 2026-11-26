@@ -44,6 +44,12 @@ jobs:
         with:
           python-version: '3.x'
 
+      # Pillow (libtiff) is an independent decoder for the CCITT TIFF test
+      # (TiffCcitt.PillowReadsCcittTiffs); the test is skipped without it.
+      - name: Install Pillow (Linux)
+        if: runner.os == 'Linux'
+        run: python3 -m pip install pillow
+
       - name: Install compiler (Linux)
         if: runner.os == 'Linux'
         run: |
