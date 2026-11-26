@@ -219,6 +219,7 @@ set(ASPOSE_PDF_FOSS_SOURCES
   src/internal/crypto.cpp
   src/internal/der.cpp
   src/internal/pkcs12.cpp
+  src/internal/pkcs7_verify.cpp
   src/internal/rc4.cpp
   src/internal/crypt_filter.cpp
   src/internal/encrypt_parser.cpp

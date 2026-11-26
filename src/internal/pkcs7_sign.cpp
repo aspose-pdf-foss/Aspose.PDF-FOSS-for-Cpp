@@ -105,9 +105,9 @@ Bytes AlgRsa() { return DerSeq(Concat({DerOid(kOidRsa), DerNull()})); }
 
 // ---- RSA PKCS#1 v1.5 signature over SHA-256(message) -----------------------
 
-Bytes RsaSignSha256(const Bytes& message) {
-    const Bytes n_raw = FromHex(keymat::kModulusHex);
-    const Bytes d_raw = FromHex(keymat::kPrivExpHex);
+Bytes RsaSignSha256(const Bytes& message, const Signer& signer) {
+    const Bytes& n_raw = signer.modulus;
+    const Bytes& d_raw = signer.private_exponent;
     const auto n = bigint::BigUint::FromBytesBE(
         std::span<const std::byte>(n_raw.data(), n_raw.size()));
     const auto d = bigint::BigUint::FromBytesBE(
@@ -142,8 +142,25 @@ Bytes RsaSignSha256(const Bytes& message) {
 
 std::string BundledSignerName() { return "Aspose.PDF FOSS Test Signer"; }
 
+Signer BundledSigner() {
+    Signer s;
+    s.modulus = FromHex(keymat::kModulusHex);
+    s.private_exponent = FromHex(keymat::kPrivExpHex);
+    s.certificate = FromHex(keymat::kCertDerHex);
+    s.issuer = FromHex(keymat::kIssuerDerHex);
+    s.serial = FromHex(keymat::kSerialTlvHex);
+    s.name = BundledSignerName();
+    return s;
+}
+
 Bytes SignDetached(std::span<const std::byte> content,
                    const std::string& signing_time_utc) {
+    return SignDetached(content, signing_time_utc, BundledSigner());
+}
+
+Bytes SignDetached(std::span<const std::byte> content,
+                   const std::string& signing_time_utc,
+                   const Signer& signer) {
     const Bytes content_vec(content.begin(), content.end());
     const auto content_digest = digest::Sha256(content);
 
@@ -163,11 +180,10 @@ Bytes SignDetached(std::span<const std::byte> content,
 
     // Sign the DER of the attributes as an explicit SET OF (tag 0x31).
     const Bytes signed_attrs_der = DerSet(attrs_concat);
-    const Bytes signature = RsaSignSha256(signed_attrs_der);
+    const Bytes signature = RsaSignSha256(signed_attrs_der, signer);
 
     // SignerInfo.
-    const Bytes sid = DerSeq(Concat({FromHex(keymat::kIssuerDerHex),
-                                     FromHex(keymat::kSerialTlvHex)}));
+    const Bytes sid = DerSeq(Concat({signer.issuer, signer.serial}));
     const Bytes signer_info = DerSeq(Concat({
         DerIntSmall(1),                     // version
         sid,                                // issuerAndSerialNumber
@@ -185,7 +201,11 @@ Bytes SignDetached(std::span<const std::byte> content,
         DerIntSmall(1),                     // version
         DerSet(AlgSha256()),                // digestAlgorithms
         encap,                              // encapContentInfo
-        Tlv(0xA0, FromHex(keymat::kCertDerHex)),  // certificates [0] IMPLICIT
+        Tlv(0xA0, [&] {                     // certificates [0] IMPLICIT
+            Bytes certs = signer.certificate;
+            for (const auto& c : signer.chain) Append(certs, c);
+            return certs;
+        }()),
         DerSet(signer_info),                // signerInfos
     }));
 
