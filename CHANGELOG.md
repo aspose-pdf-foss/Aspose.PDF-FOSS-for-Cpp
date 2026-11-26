@@ -11,6 +11,13 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `PdfFileEditor` page layout: `MakeBooklet` (pages in folding order, padded to a multiple of 4,
+  optionally on a given page size), `MakeNUp` (pages of several files side by side or stacked),
+  `AddMargins` / `AddMarginsPct`, `ResizeContents` / `ResizeContentsPct` (with
+  `ContentsResizeParameters` in units, percents or Auto) and `AddPageBreak`, plus their `Try*`
+  forms. Booklet and N-up pages carry the source pages' content only, not their annotations or
+  form fields. `ContentsResizeValue::IsAuto()` added.
+
 - `FormEditor` now edits fields instead of ignoring the calls: `SetFieldAttribute`,
   `SetFieldAppearance` / `GetFieldAppearance`, `SetFieldLimit`, `SetFieldCombNumber`, `MoveField`,
   `Single2Multiple`, `SetFieldAlignment` / `SetFieldAlignmentV`, `RenameField`, `AddListItem` /
