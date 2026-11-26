@@ -23,6 +23,10 @@ set(ASPOSE_PDF_FOSS_EXAMPLES
   10_render_text_pdf
   11_render_standard14
   12_create_features
+  13_sign_and_verify
+  14_facades_edit
+  15_rich_media
+  16_fax_tiff
 )
 
 foreach(example ${ASPOSE_PDF_FOSS_EXAMPLES})

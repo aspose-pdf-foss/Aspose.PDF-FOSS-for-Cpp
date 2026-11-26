@@ -2,11 +2,11 @@
 // PngDevice::Process raster path handles glyphs from an embedded
 // TrueType font, not just rectangles / vector primitives.
 //
-// Note: this example takes a PDF whose text is rendered with an
-// EMBEDDED font (the bundled pdfs/text_hello.pdf carries a
-// 442-byte FontFile2 stream). PDFs that reference Standard14 fonts
-// like /Helvetica, /Times-Roman, etc. WITHOUT embedding render
-// blank in v1 — Standard14 glyph synthesis is a follow-up.
+// This example takes a PDF whose text uses an EMBEDDED font (the
+// bundled pdfs/text_hello.pdf carries a 442-byte FontFile2 stream).
+// PDFs that reference Standard-14 fonts such as /Helvetica without
+// embedding them render through a system or bundled substitute —
+// see example 11.
 #include <aspose/pdf/document.hpp>
 #include <aspose/pdf/page.hpp>
 #include <aspose/pdf/page_collection.hpp>

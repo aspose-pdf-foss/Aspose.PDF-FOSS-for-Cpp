@@ -235,7 +235,7 @@ int main() {
 ```
 
 Additional Examples below extends this into a from-scratch showcase
-([`examples/12_create_features.cpp`](examples/12_create_features.cpp), one of the 12 programs
+([`examples/12_create_features.cpp`](examples/12_create_features.cpp), one of the 16 programs
 under `examples/` — see `examples/README.md`, built via `cmake --build build` into
 `build/examples/<name>`): `Table`/`Row`/`Cell` layouts, `Drawing::Graph`
 shapes (`Line`, `Rectangle`, `Circle`, `Ellipse`), annotations and AcroForm fields with a
@@ -249,9 +249,10 @@ documents, and the by-reference lifetime rule for `Paragraphs`/`Annotations`/`Fo
 
 ## Additional Examples
 
-12 runnable examples live in [`examples/`](examples/), covering the whole public surface —
-opening documents, metadata, text extraction, save round-trips, every raster device, and a
-from-scratch content-creation showcase. After `cmake --build build`, executables land at
+16 runnable examples live in [`examples/`](examples/), covering the whole public surface —
+opening documents, metadata, text extraction, save round-trips, every raster device, a
+from-scratch content-creation showcase, signing and verifying with a PKCS#12 certificate, the
+Facades editors, embedded media, and fax (CCITT) TIFF output. After `cmake --build build`, executables land at
 `build/examples/<name>`; run them in numeric order, since each builds on the previous (see
 [`examples/README.md`](examples/README.md) for the full tour).
 

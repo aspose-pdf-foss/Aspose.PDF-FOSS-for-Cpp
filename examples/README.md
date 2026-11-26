@@ -34,6 +34,8 @@ SAMPLES=../../pdfs
 
 # 3. Edit metadata (SetTitle + Info().Author/Creator/Add) + Save.
 #    The lib appends an incremental update; original bytes preserved.
+#    A file without an /Info dictionary (two_pages.pdf) works too: a
+#    new /Info object is written.
 ./03_write_metadata "$SAMPLES/with_info.pdf" /tmp/with_my_metadata.pdf
 
 # 4. Read back what 03 wrote — our edits round-trip, original
@@ -88,6 +90,23 @@ SAMPLES=../../pdfs
 ./01_pages /tmp/showcase.pdf            # -> 10 pages
 ./04_text_extraction /tmp/showcase.pdf  # -> all section text
 ./07_render_png /tmp/showcase.pdf 4 /tmp/showcase_p4.png   # the embedded pdflib.png
+
+# 14. Sign with your own certificate and verify the result. The
+#     repository's test certificates work (password "test"):
+#     signer_aes.p12 (RSA) or ec256.p12 / ec384.p12 / ec521.p12 (ECDSA).
+PFX=../../tests/fixtures/pkcs12
+./13_sign_and_verify "$SAMPLES/hello_world.pdf" "$PFX/signer_aes.p12" test /tmp/signed.pdf
+
+# 15. Facades: a footer stamp moved by its StampId, an attachment,
+#     JavaScript on open, viewer preferences, content shrunk to 90 %,
+#     one bookmark per page exported as XML.
+./14_facades_edit "$SAMPLES/two_pages.pdf" /tmp/edited.pdf /tmp/bookmarks.xml
+
+# 16. Embed a video (or .mp3) as a RichMedia annotation, optional poster.
+./15_rich_media "$SAMPLES/hello_world.pdf" clip.mp4 /tmp/video.pdf poster.png
+
+# 17. Every page of the showcase as a CCITT Group 4 (fax) TIFF.
+./16_fax_tiff /tmp/showcase.pdf /tmp/showcase_fax.tiff
 ```
 
 ## What each example shows
@@ -105,15 +124,18 @@ SAMPLES=../../pdfs
 | `09_indexed_tiff.cpp` | `TiffSettings::Depth(ColorDepth::Format8bpp)` + `TiffDevice::Process(Page, std::ostream&)` — palettised TIFF (median-cut palette) | any |
 | `10_render_text_pdf.cpp` | `PngDevice::Process(Page, std::ostream&)` end-to-end on a text-bearing page (embedded TrueType font) | `text_hello.pdf` |
 | `11_render_standard14.cpp` | Same Process, but on a PDF that references `/Helvetica` without an embedded font program — exercises the `foundation::standard14_outlines` fallback (system font → bundled Liberation) | `hello_world.pdf` |
-| `12_create_features.cpp` | **From-scratch creation:** `Document` + `Pages().Add()` + `Save`; `Text::TextBuilder` (`AppendText` / `AppendParagraph`), `FontRepository::FindFont`; `Page::AddImage` (bundled `pdflib.png`); `Table` / `Row` / `Cell` (`ColSpan`); `Drawing::Graph` (`Line`/`Rectangle`/`Circle`/`Ellipse`); `WatermarkArtifact`; the annotation gallery (`Highlight`/`Underline`/`Squiggly`/`StrikeOut`/`Square`/`Circle`/`Line`/`Ink`/`Text`/`FreeText`/`Stamp`/`Link`/`FileAttachment`); AcroForm fields (`TextBox`/`Checkbox`/`RadioButton`/`ComboBox`/`ListBox`) + `Form::Flatten`; `Outlines` bookmarks (`XYZExplicitDestination`) | none (output only) |
+| `12_create_features.cpp` | **From-scratch creation:** `Document` + `Pages().Add()` + `Save`; `Text::TextBuilder` (`AppendText` / `AppendParagraph`), `FontRepository::FindFont`; `Page::AddImage` (bundled `pdflib.png`); `Table` / `Row` / `Cell` (`ColSpan`); `Drawing::Graph` (`Line`/`Rectangle`/`Circle`/`Ellipse`); `WatermarkArtifact`; the annotation gallery (`Highlight`/`Underline`/`Squiggly`/`StrikeOut`/`Square`/`Circle`/`Line`/`Ink`/`Text`/`FreeText`/`Stamp`/`Link`/`FileAttachment`); AcroForm fields (`TextBox`/`Checkbox`/`RadioButton`/`ComboBox`/`ListBox`) + `Form::Flatten`; `Outlines` bookmarks (`XYZExplicitDestination`); document metadata on a new document | none (output only) |
+| `13_sign_and_verify.cpp` | `Facades::PdfFileSignature` — `Sign` with `Forms::PKCS7(pfx, password)` (RSA or ECDSA key), `Save`, then `VerifySignature`, `GetSignerName`, `CoversWholeDocument` | any + a `.p12` (see `tests/fixtures/pkcs12`) |
+| `14_facades_edit.cpp` | `PdfFileStamp::StampId` + `AddFooter`; `PdfContentEditor` (`AddDocumentAttachment`, `AddDocumentAdditionalAction`, `ChangeViewerPreference`, `MoveStampById`); `PdfPageEditor` (`Zoom`, alignment, `ApplyChanges`); `PdfBookmarkEditor` (`CreateBookmarkOfPage`, `ExportBookmarksToXML`) | any |
+| `15_rich_media.cpp` | `Annotations::RichMediaAnnotation` — `SetContent`, `Type`, `ActivateOn`, `SetPoster`, `Update` | any + a media file |
+| `16_fax_tiff.cpp` | `TiffSettings(CompressionType::CCITT4)` + `TiffDevice::Process(Document, from, to, ostream)` — bi-level fax TIFF | any |
 
 ## Notes
 
-* **Example 03 requires** the input PDF to already have an `/Info`
-  dictionary in its trailer — the incremental-update writer patches
-  an existing `/Info` object rather than synthesising a new one.
-  `with_info.pdf` is bundled for this reason. Inputs without `/Info`
-  cause `Save()` to throw `std::runtime_error`.
+* **Example 03 works on any input** — with an existing `/Info`
+  dictionary the incremental update patches it; without one (e.g.
+  `two_pages.pdf`) a new `/Info` object is written and referenced from
+  the new trailer.
 
 * **Example 12 is the only *creation* example** — every other one
   opens an existing PDF; 12 builds one from nothing and is the
@@ -122,14 +144,13 @@ SAMPLES=../../pdfs
   rasteriser paints monochrome line-art + black text + embedded
   images + watermark, so the rendered result is black-on-white (open
   the output in any viewer to see the full interactive structure:
-  form fields, annotations, bookmarks). It deliberately does **not**
-  set `Document::Info()` — a from-scratch document has no `/Info`
-  object for the incremental-update writer to patch (see the
-  Example 03 note above), so doing so would throw at `Save()`.
+  form fields, annotations, bookmarks). It also sets
+  `Document::Info()` — a from-scratch document gets a new `/Info`
+  object on save.
 
 * **Example 06 doesn't drive a device end-to-end** — it only
   constructs them and round-trips properties. Examples 07 and 08
-  are the end-to-end rendering ones: `Document → Pages()[N] →
+  (and 09 - 11, 16) are the end-to-end rendering ones: `Document → Pages()[N] →
   PngDevice::Process → PNG bytes` (single page) and
   `Document → TiffDevice::Process(Document, from, to, …) → multi-
   page TIFF` (page range).
@@ -145,6 +166,12 @@ SAMPLES=../../pdfs
   compiled into the static lib. Symbol and ZapfDingbats are
   deferred (no permissively-licensed metric-equivalent substitute
   located yet).
+
+* **Examples 13 - 16 cover editing and security**: signing with a
+  PKCS#12 certificate (13), the classic Facades editors (14), embedded
+  media (15) and fax TIFF output (16). Example 13 exits non-zero if
+  the signature does not verify; 15 accepts any file as "media" for a
+  quick try-out (the annotation is valid, the media just won't play).
 
 * **Caller-pluggable palette quantisation** — TiffDevice has 5
   ctor overloads that take an `Aspose::Pdf::IIndexBitmapConverter&`

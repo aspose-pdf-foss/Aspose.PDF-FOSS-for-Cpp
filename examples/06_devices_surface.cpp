@@ -1,11 +1,6 @@
-// Demonstrate the rendering-device surface from this beat.
-// Process(Page, ostream) overrides exist + are wired to
-// foundation::page_renderer / foundation::text_extractor — but
-// driving them requires a Page instance, which canonical
-// PageCollection produces via its indexer (NYI in v1 surface).
-//
-// Snippet shows the parts that ARE callable today: ctors,
-// property accessors, value round-trips.
+// Construct the rendering devices and round-trip their properties.
+// Driving a device end-to-end (Process(Page, ostream) on a page from
+// Document::Pages()[n]) is shown by examples 07 - 11.
 
 #include <aspose/pdf/bmp_device.hpp>
 #include <aspose/pdf/jpeg_device.hpp>

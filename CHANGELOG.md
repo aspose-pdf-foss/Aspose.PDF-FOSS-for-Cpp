@@ -11,6 +11,11 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- Examples 13 - 16: signing and verifying with a PKCS#12 certificate, the Facades editors
+  (stamps, attachments, document actions, viewer preferences, page zoom, bookmark XML), embedded
+  media (RichMedia) and fax (CCITT Group 4) TIFF output. Example notes no longer describe the
+  removed `/Info` limitation.
+
 - `RichMediaAnnotation` embeds video or audio: `SetContent(name, bytes)`, `SetPoster(png/jpeg)`,
   `CustomPlayer(swf)`, `AddCustomData`; Save writes `/RichMediaContent` (assets, configuration,
   instance) and `/RichMediaSettings` (activation on click / page open / page visible) with the
@@ -136,6 +141,10 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- Attachments and XMP metadata written at Save after an earlier incremental edit (for example a
+  `PdfFileStamp` stamp) could reuse the ids of the objects that edit added, overwriting them: the
+  trailer `/Size` read from a multi-revision file can be stale. New ids now also stay above every
+  existing object.
 - Document information set on a document without an `/Info` dictionary — created from scratch,
   or loaded from a file that has none — is saved in a new `/Info` object referenced from the
   trailer. Saving used to throw.

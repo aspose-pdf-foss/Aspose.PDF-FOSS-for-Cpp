@@ -2102,7 +2102,10 @@ std::vector<std::byte> Document::AppendMetadataUpdate(
         stream_gen = existing_meta->generation;
         catalog_dirty = false;
     } else {
+        // Next free id: the trailer's /Size can be stale on a file with
+        // several revisions, so also stay above every existing object.
         stream_id = trailer_bundle.size;
+        for (const auto& o : dump.objects) stream_id = std::max(stream_id, o.id + 1);
         stream_gen = 0;
         catalog_dirty = true;
     }
@@ -7683,7 +7686,9 @@ std::vector<std::byte> Document::AppendEmbeddedFilesUpdate(
         std::get_if<foundation::objects::Dict>(&catalog->value.v);
     if (catalog_dict == nullptr) return working;
 
+    // Next free id: /Size can be stale on a multi-revision file.
     std::uint32_t next_id = trailer_bundle.size;
+    for (const auto& o : dump.objects) next_id = std::max(next_id, o.id + 1);
     std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
 
     // For each FileSpec entry: read bytes from disk, emit
