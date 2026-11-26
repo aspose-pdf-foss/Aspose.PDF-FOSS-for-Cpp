@@ -1,5 +1,7 @@
 #include <aspose/pdf/facades/pdf_page_editor.hpp>
 
+#include "_pending.hpp"
+
 #include <utility>
 
 #include <aspose/pdf/document.hpp>
@@ -12,7 +14,7 @@ PdfPageEditor::PdfPageEditor(Aspose::Pdf::Document& document) {
     BindPdf(document);
 }
 
-void PdfPageEditor::MovePosition(float, float) {}
+void PdfPageEditor::MovePosition(float, float) { PENDING("page-editor-move-position"); }
 
 int PdfPageEditor::GetPages() {
     return document_ == nullptr
@@ -32,7 +34,11 @@ int PdfPageEditor::GetPageRotation(int pageId) {
     return static_cast<int>(document_->Pages()[pageId].Rotate()) * 90;
 }
 
-void PdfPageEditor::ApplyChanges() {}
+void PdfPageEditor::ApplyChanges() {
+    // Rotation, Zoom, PageSize, Alignment and transitions are stored but
+    // not applied to the document yet.
+    PENDING("page-editor-apply-changes");
+}
 
 int PdfPageEditor::TransitionDuration() const noexcept {
     return transition_duration_;

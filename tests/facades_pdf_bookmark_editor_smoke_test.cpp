@@ -6,6 +6,7 @@
 // via foundation::outlines. HTML/XML import/export remain stubs.
 // =============================================================================
 
+#include <stdexcept>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -118,7 +119,7 @@ TEST(FacadesBookmarkSmoke, ChildItemsRoundtrip) {
     EXPECT_EQ(parent.ChildItem().size(), 1u);
 }
 
-TEST(FacadesBookmarkSmoke, EditorStubsDoNotThrow) {
+TEST(FacadesBookmarkSmoke, EditorCallsAndUnimplementedExportThrow) {
     Document doc{HelloWorldPdf()};
     PdfBookmarkEditor editor{doc};
 
@@ -134,11 +135,11 @@ TEST(FacadesBookmarkSmoke, EditorStubsDoNotThrow) {
     editor.ModifyBookmarks("old", "new");
     editor.DeleteBookmarks("Intro");
     editor.DeleteBookmarks();
-    editor.ExportBookmarksToXML("out.xml");
-    editor.ImportBookmarksWithXML("in.xml");
-    editor.ExportBookmarksToHtml("dir", "out.html");
-    editor.ExtractBookmarksToHTML("dir", "out.html");
-    SUCCEED();
+    // XML / HTML import and export are not implemented.
+    EXPECT_THROW(editor.ExportBookmarksToXML("out.xml"), std::logic_error);
+    EXPECT_THROW(editor.ImportBookmarksWithXML("in.xml"), std::logic_error);
+    EXPECT_THROW(editor.ExportBookmarksToHtml("dir", "out.html"), std::logic_error);
+    EXPECT_THROW(editor.ExtractBookmarksToHTML("dir", "out.html"), std::logic_error);
 }
 
 TEST(FacadesBookmarkSmoke, ExtractReturnsEmptyBookmarks) {

@@ -871,8 +871,8 @@ void PdfFileEditor::KeepFieldsUnique(bool v) noexcept {
 
 void PdfFileEditor::LastException(const std::string& v) {
     (void)v;
-    // v1 stub — System.Exception drops via translations; the
-    // setter accepts the call but doesn't surface the exception.
+    // Setter-only in the API: nothing reads the value back, so there is
+    // nothing to store (Try* failures are reported by their return value).
 }
 
 bool PdfFileEditor::MergeDuplicateLayers() const noexcept {

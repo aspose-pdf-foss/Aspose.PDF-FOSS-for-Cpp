@@ -73,6 +73,7 @@ namespace Facades { class PdfFileEditor; }
 namespace Facades { class PdfBookmarkEditor; }
 namespace Facades { class PdfFileStamp; }
 namespace Facades { class PdfFileSignature; }
+namespace Facades { class PdfFileInfo; }
 namespace Facades { class PdfContentEditor; }
 namespace Facades { class PdfExtractor; }
 namespace Facades { class PdfAnnotationEditor; }
@@ -387,6 +388,7 @@ private:
     friend class Aspose::Pdf::Facades::PdfBookmarkEditor;
     friend class Aspose::Pdf::Facades::PdfFileStamp;
     friend class Aspose::Pdf::Facades::PdfFileSignature;
+    friend class Aspose::Pdf::Facades::PdfFileInfo;
     friend class Aspose::Pdf::Facades::PdfContentEditor;
     friend class Aspose::Pdf::Facades::PdfExtractor;
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
@@ -732,6 +734,8 @@ private:
     void RemoveSignatureInternal(const std::string& field_name, bool keep_field);
 
     CatalogSignatureState ReadCatalogSignatureStateInternal() const;
+    // True when the catalog has an entry `key` (e.g. "Collection").
+    bool CatalogHasEntryInternal(const std::string& key) const noexcept;
     // Drop /Perms /UR3 and /UR (usage rights) from the catalog.
     void RemoveUsageRightsInternal();
 
@@ -855,6 +859,10 @@ private:
     // — wired through to content consumers (TextAbsorber etc.) in
     // a future beat.
     bool is_encrypted_ = false;
+    // How an encrypted document was opened: with the owner password, and
+    // whether it has a non-empty user (open) password at all.
+    bool opened_as_owner_ = false;
+    bool has_user_password_ = false;
     std::vector<std::byte> file_key_;
 
     // Staged encryption parameters set by Encrypt(...) and consumed

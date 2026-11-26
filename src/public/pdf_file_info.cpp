@@ -225,8 +225,8 @@ void PdfFileInfo::UseStrictValidation(bool v) noexcept {
 }
 
 bool PdfFileInfo::HasCollection() const noexcept {
-    // /Collection catalog entry not yet surfaced — v1 default false.
-    return false;
+    const auto* doc = Document();
+    return doc != nullptr && doc->CatalogHasEntryInternal("Collection");
 }
 
 const std::string& PdfFileInfo::InputFile() const noexcept {
@@ -245,9 +245,20 @@ int PdfFileInfo::NumberOfPages() const noexcept {
 }
 
 Aspose::Pdf::PasswordType PdfFileInfo::PasswordType() const noexcept {
-    return password_type_;
+    const auto* doc = Document();
+    if (doc == nullptr || !doc->IsEncrypted())
+        return Aspose::Pdf::PasswordType::None;
+    return doc->opened_as_owner_ ? Aspose::Pdf::PasswordType::Owner
+                                 : Aspose::Pdf::PasswordType::User;
 }
-bool PdfFileInfo::HasOpenPassword() const noexcept { return false; }
-bool PdfFileInfo::HasEditPassword() const noexcept { return false; }
+bool PdfFileInfo::HasOpenPassword() const noexcept {
+    const auto* doc = Document();
+    return doc != nullptr && doc->IsEncrypted() && doc->has_user_password_;
+}
+bool PdfFileInfo::HasEditPassword() const noexcept {
+    // The standard security handler always carries an owner password.
+    const auto* doc = Document();
+    return doc != nullptr && doc->IsEncrypted();
+}
 
 }  // namespace Aspose::Pdf::Facades

@@ -9,6 +9,7 @@
 // / RegistrationMark / PageInformation) added.
 // =============================================================================
 
+#include <stdexcept>
 #include <aspose/pdf/annotations/annotation_selector.hpp>
 #include <aspose/pdf/annotations/annotation_type.hpp>
 #include <aspose/pdf/annotations/bleed_mark_annotation.hpp>
@@ -133,11 +134,10 @@ TEST(MediaPrint3DFamilySmoke, RichMediaConstructAndAccessors) {
 
 TEST(MediaPrint3DFamilySmoke, PrinterMarkBaseStaticHelpers) {
     Document doc;
-    // v1 bodies are no-op; the call confirms the static helpers
-    // exist on the abstract base + accept document/page targets.
-    PrinterMarkAnnotation::AddPrinterMarks(doc,
-        PrinterMarksKind::TrimMarks);
-    SUCCEED();
+    // Printer marks are not generated yet: the helper throws.
+    EXPECT_THROW(PrinterMarkAnnotation::AddPrinterMarks(doc,
+                     PrinterMarksKind::TrimMarks),
+                 std::logic_error);
 }
 
 TEST(MediaPrint3DFamilySmoke, PrinterMarkSubclassHeadersCompile) {

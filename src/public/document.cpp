@@ -949,6 +949,20 @@ Document::Document(const std::string& filename,
         }
         is_encrypted_ = true;
         file_key_ = auth.file_key;
+        opened_as_owner_ = auth.used_owner_path;
+        // A user (open) password exists unless the empty one opens it.
+        has_user_password_ = true;
+        if (pwd.empty() && !auth.used_owner_path) {
+            has_user_password_ = false;
+        } else {
+            try {
+                const auto blank = foundation::encrypt_parser::Authenticate(
+                    enc, std::span<const std::byte>(),
+                    std::span<const std::byte>(file_id.data(), file_id.size()));
+                has_user_password_ = !(blank.authenticated && !blank.used_owner_path);
+            } catch (const std::exception&) {
+            }
+        }
     }
 
     tree_ = std::make_unique<foundation::pages_tree::Tree>(
@@ -11362,6 +11376,21 @@ Document::ReadCatalogSignatureStateInternal() const {
     } catch (const std::exception&) {
     }
     return st;
+}
+
+bool Document::CatalogHasEntryInternal(const std::string& key) const noexcept {
+    try {
+        auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+        const auto trailer_bundle = foundation::trailer::Parse(span);
+        const auto dump = foundation::objects::Parse(span);
+        const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+        const auto* cat =
+            catalog ? std::get_if<foundation::objects::Dict>(&catalog->value.v)
+                    : nullptr;
+        return cat != nullptr && DictGet(*cat, key) != nullptr;
+    } catch (...) {
+        return false;
+    }
 }
 
 void Document::RemoveUsageRightsInternal() {

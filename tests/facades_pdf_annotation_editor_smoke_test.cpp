@@ -6,6 +6,7 @@
 // delete-by-subtype are stubs.
 // =============================================================================
 
+#include <stdexcept>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -83,31 +84,29 @@ TEST(FacadesPdfAnnotationEditorSmoke, DeleteAnnotationUnknownNameNoOp) {
     EXPECT_EQ(doc.Pages()[1].Annotations().Count(), 1);
 }
 
-TEST(FacadesPdfAnnotationEditorSmoke, StubsDoNotThrow) {
+TEST(FacadesPdfAnnotationEditorSmoke, UnimplementedImportAndModifyThrow) {
     Document doc{HelloWorldPdf()};
     PdfAnnotationEditor editor{doc};
 
     const std::vector<AnnotationType> types{AnnotationType::Text};
     const std::vector<std::string> files{"a.xfdf"};
 
-    // Import / modify / flatten / delete-by-subtype are v1 stubs:
-    // they must bind + run without throwing on a bound document.
-    editor.ImportAnnotationsFromXfdf("a.xfdf");
-    editor.ImportAnnotationsFromFdf("a.fdf");
-    editor.ImportAnnotationFromXfdf("a.xfdf");
-    editor.ImportAnnotationFromXfdf("a.xfdf", types);
-    editor.ImportAnnotations(files, types);
-    editor.ImportAnnotations(files);
-    editor.ModifyAnnotationsAuthor(1, 1, "old", "new");
+    // Import and modify are not implemented: they throw instead of
+    // silently doing nothing.
+    EXPECT_THROW(editor.ImportAnnotationsFromXfdf("a.xfdf"), std::logic_error);
+    EXPECT_THROW(editor.ImportAnnotationsFromFdf("a.fdf"), std::logic_error);
+    EXPECT_THROW(editor.ImportAnnotationFromXfdf("a.xfdf"), std::logic_error);
+    EXPECT_THROW(editor.ImportAnnotationFromXfdf("a.xfdf", types), std::logic_error);
+    EXPECT_THROW(editor.ImportAnnotations(files, types), std::logic_error);
+    EXPECT_THROW(editor.ImportAnnotations(files), std::logic_error);
+    EXPECT_THROW(editor.ModifyAnnotationsAuthor(1, 1, "old", "new"), std::logic_error);
+    TextAnnotation tmpl{doc};
+    EXPECT_THROW(editor.ModifyAnnotations(1, 1, tmpl), std::logic_error);
+
+    // Flatten and delete-by-subtype work.
     editor.FlatteningAnnotations();
     editor.FlatteningAnnotations(1, 1, types);
-    editor.DeleteAnnotations("Text");  // delete-by-subtype stub
-
-    // ModifyAnnotations(start, end, Annotation&) stub.
-    TextAnnotation tmpl{doc};
-    editor.ModifyAnnotations(1, 1, tmpl);
-
-    SUCCEED();
+    editor.DeleteAnnotations("Text");
 }
 
 TEST(FacadesPdfAnnotationEditorSmoke, UnboundDeleteIsSafe) {

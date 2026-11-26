@@ -1,5 +1,7 @@
 #include <aspose/pdf/facades/pdf_annotation_editor.hpp>
 
+#include "_pending.hpp"
+
 #include <aspose/pdf/annotations/annotation.hpp>
 #include <aspose/pdf/annotations/annotation_collection.hpp>
 #include <aspose/pdf/document.hpp>
@@ -12,29 +14,42 @@ PdfAnnotationEditor::PdfAnnotationEditor(Aspose::Pdf::Document& document) {
     BindPdf(document);
 }
 
-// ===== Import — v1 stubs =====================================================
-// XFDF / FDF parsing (the annotation-interchange formats) lands in a
-// follow-on beat. The surface compiles + binds; callers see a no-op
-// import until then.
+// ===== Import / modify — not implemented =====================================
+// XFDF / FDF annotation import and bulk modification throw rather than
+// silently doing nothing.
 
-void PdfAnnotationEditor::ImportAnnotationsFromXfdf(const std::string&) {}
-void PdfAnnotationEditor::ImportAnnotationsFromFdf(const std::string&) {}
-void PdfAnnotationEditor::ImportAnnotationFromXfdf(const std::string&) {}
+void PdfAnnotationEditor::ImportAnnotationsFromXfdf(const std::string&) {
+    PENDING("annotation-xfdf-import");
+}
+void PdfAnnotationEditor::ImportAnnotationsFromFdf(const std::string&) {
+    PENDING("annotation-fdf-import");
+}
+void PdfAnnotationEditor::ImportAnnotationFromXfdf(const std::string&) {
+    PENDING("annotation-xfdf-import");
+}
 void PdfAnnotationEditor::ImportAnnotationFromXfdf(
     const std::string&,
-    const std::vector<Aspose::Pdf::Annotations::AnnotationType>&) {}
+    const std::vector<Aspose::Pdf::Annotations::AnnotationType>&) {
+    PENDING("annotation-xfdf-import");
+}
 void PdfAnnotationEditor::ImportAnnotations(
     const std::vector<std::string>&,
-    const std::vector<Aspose::Pdf::Annotations::AnnotationType>&) {}
+    const std::vector<Aspose::Pdf::Annotations::AnnotationType>&) {
+    PENDING("annotation-pdf-import");
+}
 void PdfAnnotationEditor::ImportAnnotations(
-    const std::vector<std::string>&) {}
-
-// ===== Modify — v1 stubs =====================================================
+    const std::vector<std::string>&) {
+    PENDING("annotation-pdf-import");
+}
 
 void PdfAnnotationEditor::ModifyAnnotations(
-    int, int, Aspose::Pdf::Annotations::Annotation&) {}
+    int, int, Aspose::Pdf::Annotations::Annotation&) {
+    PENDING("annotation-modify");
+}
 void PdfAnnotationEditor::ModifyAnnotationsAuthor(
-    int, int, const std::string&, const std::string&) {}
+    int, int, const std::string&, const std::string&) {
+    PENDING("annotation-modify");
+}
 
 namespace {
 

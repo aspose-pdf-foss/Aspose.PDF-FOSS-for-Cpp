@@ -1,5 +1,7 @@
 #include <aspose/pdf/annotations/rich_media_annotation.hpp>
 
+#include "_pending.hpp"
+
 #include <utility>
 
 namespace Aspose::Pdf::Annotations {
@@ -15,8 +17,8 @@ void RichMediaAnnotation::Accept(AnnotationSelector& visitor) {
 }
 
 void RichMediaAnnotation::Update() {
-    // v1 no-op — stream re-emission is wired into the Document
-    // save-time edit-flow which v1 doesn't yet expose.
+    // Re-emitting the rich-media streams is not wired into saving.
+    PENDING("richmedia-update");
 }
 
 const std::string&

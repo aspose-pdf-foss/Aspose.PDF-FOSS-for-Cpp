@@ -1,5 +1,7 @@
 #include <aspose/pdf/facades/pdf_bookmark_editor.hpp>
 
+#include "_pending.hpp"
+
 #include <aspose/pdf/document.hpp>
 
 namespace Aspose::Pdf::Facades {
@@ -87,21 +89,54 @@ Bookmarks PdfBookmarkEditor::ExtractBookmarks() {
     }
     return result;
 }
-Bookmarks PdfBookmarkEditor::ExtractBookmarks(bool) {
-    return ExtractBookmarks();
+Bookmarks PdfBookmarkEditor::ExtractBookmarks(bool upperLevel) {
+    Bookmarks all = ExtractBookmarks();
+    if (!upperLevel) return all;
+    Bookmarks top;
+    for (auto& b : all)
+        if (b.Level() == 1) top.push_back(std::move(b));
+    return top;
 }
-Bookmarks PdfBookmarkEditor::ExtractBookmarks(const std::string&) {
-    return ExtractBookmarks();
+
+namespace {
+
+// The bookmarks (depth-first, with levels) under each one titled `title`;
+// `with_root` keeps the titled bookmark itself.
+Bookmarks Subtrees(const Bookmarks& all, const std::string& title, int level,
+                   bool with_root) {
+    Bookmarks out;
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        if (all[i].Title() != title || (level > 0 && all[i].Level() != level))
+            continue;
+        if (with_root) out.push_back(all[i]);
+        for (std::size_t j = i + 1; j < all.size() && all[j].Level() > all[i].Level(); ++j)
+            out.push_back(all[j]);
+    }
+    return out;
 }
-Bookmarks PdfBookmarkEditor::ExtractBookmarks(const Bookmark&) {
-    return ExtractBookmarks();
+
+}  // namespace
+
+Bookmarks PdfBookmarkEditor::ExtractBookmarks(const std::string& title) {
+    return Subtrees(ExtractBookmarks(), title, 0, true);
+}
+Bookmarks PdfBookmarkEditor::ExtractBookmarks(const Bookmark& parent) {
+    return Subtrees(ExtractBookmarks(), parent.Title(), parent.Level(), false);
 }
 
 void PdfBookmarkEditor::ExtractBookmarksToHTML(const std::string&,
-                                               const std::string&) {}
+                                               const std::string&) {
+    PENDING("bookmarks-html-export");
+}
 void PdfBookmarkEditor::ExportBookmarksToHtml(const std::string&,
-                                              const std::string&) {}
-void PdfBookmarkEditor::ExportBookmarksToXML(const std::string&) {}
-void PdfBookmarkEditor::ImportBookmarksWithXML(const std::string&) {}
+                                              const std::string&) {
+    PENDING("bookmarks-html-export");
+}
+void PdfBookmarkEditor::ExportBookmarksToXML(const std::string&) {
+    PENDING("bookmarks-xml");
+}
+void PdfBookmarkEditor::ImportBookmarksWithXML(const std::string&) {
+    PENDING("bookmarks-xml");
+}
 
 }  // namespace Aspose::Pdf::Facades

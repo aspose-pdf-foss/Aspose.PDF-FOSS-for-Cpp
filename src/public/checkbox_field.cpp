@@ -1,5 +1,7 @@
 #include <aspose/pdf/forms/checkbox_field.hpp>
 
+#include "_pending.hpp"
+
 #include <utility>
 
 namespace Aspose::Pdf::Forms {
@@ -18,24 +20,24 @@ CheckboxField::CheckboxField(Aspose::Pdf::Document& doc,
     Rect(std::move(rect));
 }
 
-void* CheckboxField::Clone() const noexcept {
-    return nullptr;
+void* CheckboxField::Clone() const {
+    PENDING("checkbox-clone");
 }
 
 void CheckboxField::AddOption(const std::string& /*optionName*/) {
-    // v1 no-op — the option storage on the underlying widget is
-    // not yet exposed. Real impl lands with F8 save-through.
+    // Check-box options (one widget per export value) are not modelled.
+    PENDING("checkbox-options");
 }
 
 void CheckboxField::AddOption(const std::string& /*optionName*/,
                                Aspose::Pdf::Rectangle /*rect*/) {
-    // v1 no-op (see above).
+    PENDING("checkbox-options");
 }
 
 void CheckboxField::AddOption(const std::string& /*optionName*/,
                                int /*page*/,
                                Aspose::Pdf::Rectangle /*rect*/) {
-    // v1 no-op (see above).
+    PENDING("checkbox-options");
 }
 
 std::vector<std::string> CheckboxField::AllowedStates() const {

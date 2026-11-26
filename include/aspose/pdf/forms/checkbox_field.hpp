@@ -33,7 +33,7 @@ public:
     // Canonical Clone returns System.Object → void* per the
     // System.Object translation. v1 stub returns nullptr; full
     // deep-copy lands with the AcroForm save-through beat.
-    void* Clone() const noexcept;
+    void* Clone() const;  // throws std::logic_error (not implemented)
 
     // ---- Mutation ----
 

@@ -8,6 +8,7 @@
 // DeleteOption / Options collection.
 // =============================================================================
 
+#include <stdexcept>
 #include <string>
 
 #include <aspose/pdf/document.hpp>
@@ -72,15 +73,11 @@ TEST(FormsButtonFamilySmoke, CheckboxFieldDefaultsAndState) {
     EXPECT_EQ(states[0], "Off");
     EXPECT_EQ(states[1], "On");
 
-    // Clone returns nullptr (v1 stub).
-    EXPECT_EQ(c.Clone(), nullptr);
-
-    // AddOption variants are v1 no-ops; just exercise they don't
-    // throw.
-    c.AddOption("Off");
-    c.AddOption("Yes", Rectangle{0, 0, 10, 10, false});
-    c.AddOption("No", 1, Rectangle{0, 0, 10, 10, false});
-    SUCCEED();
+    // Clone and check-box options are not implemented: they throw.
+    EXPECT_THROW(c.Clone(), std::logic_error);
+    EXPECT_THROW(c.AddOption("Off"), std::logic_error);
+    EXPECT_THROW(c.AddOption("Yes", Rectangle{0, 0, 10, 10, false}), std::logic_error);
+    EXPECT_THROW(c.AddOption("No", 1, Rectangle{0, 0, 10, 10, false}), std::logic_error);
 }
 
 TEST(FormsButtonFamilySmoke, CheckboxValueShadowsField) {

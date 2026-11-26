@@ -1,14 +1,14 @@
 #include <aspose/pdf/annotations/text_markup_annotation.hpp>
 
+#include "_pending.hpp"
+
 #include <utility>
 
 namespace Aspose::Pdf::Annotations {
 
 std::string TextMarkupAnnotation::GetMarkedText() const {
-    // v1 stub — full text extraction across the QuadPoints
-    // requires the text-extraction wire-through (separate
-    // cluster). Returns empty until that lands.
-    return std::string{};
+    // Text under the QuadPoints is not extracted yet.
+    PENDING("markup-marked-text");
 }
 
 const std::vector<Aspose::Pdf::Point>&

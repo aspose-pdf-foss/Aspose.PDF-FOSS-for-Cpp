@@ -170,10 +170,23 @@ void PdfFileStamp::PageNumberRotation(float value) noexcept {
 void PdfFileStamp::ConvertTo(Aspose::Pdf::PdfFormat value) noexcept {
     convert_to_ = value;
 }
+// The first page's size; US Letter when nothing is bound.
 float PdfFileStamp::PageHeight() const noexcept {
-    return 792.0f;  // canonical US-Letter default (per-page geometry deferred)
+    try {
+        if (document_ != nullptr && document_->PageCountInternal() > 0)
+            return static_cast<float>(document_->PageHeightInternal(0));
+    } catch (...) {
+    }
+    return 792.0f;
 }
-float PdfFileStamp::PageWidth() const noexcept { return 612.0f; }
+float PdfFileStamp::PageWidth() const noexcept {
+    try {
+        if (document_ != nullptr && document_->PageCountInternal() > 0)
+            return static_cast<float>(document_->PageWidthInternal(0));
+    } catch (...) {
+    }
+    return 612.0f;
+}
 int PdfFileStamp::StartingNumber() const noexcept { return starting_number_; }
 void PdfFileStamp::StartingNumber(int value) noexcept {
     starting_number_ = value;

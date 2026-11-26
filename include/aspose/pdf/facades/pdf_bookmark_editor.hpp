@@ -54,14 +54,17 @@ public:
     void ModifyBookmarks(const std::string& oldTitle,
                          const std::string& newTitle);
 
-    // ---- Extract (v1 stubs — return empty Bookmarks) ----
+    // ---- Extract: a flat depth-first list, Level() 1 = top ----
 
     Bookmarks ExtractBookmarks();
-    Bookmarks ExtractBookmarks(bool keepLevels);
+    // true: only the top-level bookmarks; false: all of them.
+    Bookmarks ExtractBookmarks(bool upperLevel);
+    // Every bookmark titled `title` with the bookmarks under it.
     Bookmarks ExtractBookmarks(const std::string& title);
+    // The bookmarks under `parent` (matched by title, and by level when set).
     Bookmarks ExtractBookmarks(const Bookmark& parent);
 
-    // ---- Import / Export (v1 stubs) ----
+    // ---- Import / Export (not implemented: throw std::logic_error) ----
 
     void ExtractBookmarksToHTML(const std::string& dataDir,
                                 const std::string& outputFile);

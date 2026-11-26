@@ -1,4 +1,6 @@
 #include <aspose/pdf/forms/form.hpp>
+
+#include "_pending.hpp"
 #include <aspose/pdf/forms/radio_button_field.hpp>
 
 #include <algorithm>
@@ -179,8 +181,9 @@ void Form::RemoveFieldAppearance(Field& field, int appearanceIndex) {
 
 void Form::MakeFormAnnotationsIndependent(
         Aspose::Pdf::Page& /*page*/) {
-    // v1 no-op — detaches widget annotations from their Form
-    // bindings so they survive Form.Delete(); lands with F8.
+    // Would detach the page's widget annotations from their fields so
+    // they survive Form.Delete().
+    PENDING("form-annotations-independent");
 }
 
 bool Form::HasField(const Field& field) const noexcept {
@@ -202,9 +205,8 @@ bool Form::HasField(const std::string& fieldName,
 
 std::vector<Field*>
 Form::GetFieldsInRect(Aspose::Pdf::Rectangle /*rect*/) const {
-    // v1 stub returns empty — the rect-overlap test needs each
-    // widget rendition's Rect, which v1 doesn't track in Form.
-    return {};
+    // Needs each widget rendition's rectangle, which Form does not track.
+    PENDING("form-fields-in-rect");
 }
 
 bool Form::AutoRecalculate() const noexcept { return auto_recalculate_; }

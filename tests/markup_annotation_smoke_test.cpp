@@ -5,6 +5,7 @@
 // this beat (AnnotationState, AnnotationStateModel, ReplyType).
 // =============================================================================
 
+#include <stdexcept>
 #include <aspose/pdf/annotations/annotation_state.hpp>
 #include <aspose/pdf/annotations/annotation_state_model.hpp>
 #include <aspose/pdf/annotations/markup_annotation.hpp>
@@ -118,10 +119,10 @@ TEST(MarkupAnnotationSmoke, InReplyToRoundtrip) {
     EXPECT_EQ(m.InReplyTo(), reply);
 }
 
-TEST(TextMarkupAnnotationSmoke, QuadPointsAndStubText) {
+TEST(TextMarkupAnnotationSmoke, QuadPointsAndUnimplementedMarkedText) {
     TextMarkup t;
     EXPECT_TRUE(t.QuadPoints().empty());
-    EXPECT_TRUE(t.GetMarkedText().empty());
+    EXPECT_THROW(t.GetMarkedText(), std::logic_error);
 
     std::vector<Point> pts{
         Point{0, 0}, Point{10, 0}, Point{10, 10}, Point{0, 10}};
