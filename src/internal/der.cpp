@@ -125,6 +125,10 @@ Certificate ParseCertificate(std::span<const std::byte> der) {
                 c.modulus = UnsignedInteger(parts[0]);
                 c.exponent = UnsignedInteger(parts[1]);
             }
+        } else if (alg.size() >= 2 && Oid(alg[0]) == "1.2.840.10045.2.1" &&
+                   alg[1].tag == 0x06) {  // id-ecPublicKey, namedCurve
+            c.ec_curve_oid = Oid(alg[1]);
+            c.ec_point = Copy(spki[1].content.subspan(1));
         }
     }
     return c;

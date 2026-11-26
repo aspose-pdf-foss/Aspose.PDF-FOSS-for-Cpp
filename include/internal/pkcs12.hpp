@@ -3,7 +3,8 @@
 // =============================================================================
 // foundation::pkcs12 — open a PKCS#12 (.pfx / .p12) file (RFC 7292): check its
 // password MAC and extract the RSA private key and its certificate chain.
-// Encryption: PBES2 (PBKDF2-HMAC-SHA1/256 with AES-128/192/256-CBC) and the
+// Keys: RSA, and EC on P-256 / P-384 / P-521.
+// Encryption: PBES2 (PBKDF2-HMAC-SHA1/256 with AES-128/256-CBC) and the
 // legacy pbeWithSHAAnd3-KeyTripleDES-CBC / pbeWithSHAAnd40/128BitRC2-CBC.
 // =============================================================================
 
@@ -15,14 +16,18 @@
 
 namespace foundation::pkcs12 {
 
-struct RsaPrivateKey {
+// An RSA key (modulus set) or an EC key (ec_curve_oid set).
+struct PrivateKey {
     std::vector<std::byte> modulus;
     std::vector<std::byte> public_exponent;
     std::vector<std::byte> private_exponent;
+    std::string ec_curve_oid;
+    std::vector<std::byte> ec_private;   // the scalar d
+    std::vector<std::byte> ec_public;    // d·G, uncompressed
 };
 
 struct Contents {
-    RsaPrivateKey key;
+    PrivateKey key;
     der::Certificate signer;                  // the key's certificate
     std::vector<der::Certificate> chain;      // the other certificates
 };

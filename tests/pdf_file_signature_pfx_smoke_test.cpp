@@ -245,17 +245,26 @@ TEST(PdfFileSignaturePfx, UsageRightsAndLtvDetection) {
     EXPECT_TRUE(reader.IsLtvEnabled());
 }
 
+TEST(PdfFileSignaturePfx, EcdsaSignAndVerify) {
+    for (const char* name : {"ec256.p12", "ec384.p12", "ec521.p12"}) {
+        const auto out = TmpPath(std::string("sig_pfx_") + name);
+        SignWith(out, Pfx(name));
+        Document doc{out};
+        PdfFileSignature reader{doc};
+        EXPECT_TRUE(reader.VerifySignature("Signature1")) << name;
+        EXPECT_NE(reader.GetSignerName("Signature1").find("FOSS EC P-"), std::string::npos);
+    }
+}
+
 // The PKCS#12-signed PDF verifies with the openssl CLI (Linux CI / WSL).
-TEST(PdfFileSignaturePfx, OpenSslVerifiesPfxSignature) {
-    if (std::system("command -v openssl >/dev/null 2>&1") != 0)
-        GTEST_SKIP() << "openssl CLI not available";
+void OpenSslVerify(const std::string& pfx, const std::string& ca) {
     const auto out = TmpPath("sig_pfx_openssl");
-    SignWith(out, Pfx("signer_aes.p12"));
+    SignWith(out, Pfx(pfx));
     const std::string bytes = ReadFile(out);
     const auto brp = bytes.rfind("/ByteRange [");
     ASSERT_NE(brp, std::string::npos);
     long long br[4];
-    ASSERT_EQ(std::sscanf(bytes.c_str() + brp, "/ByteRange [%lld %lld %lld %lld",
+    EXPECT_EQ(std::sscanf(bytes.c_str() + brp, "/ByteRange [%lld %lld %lld %lld",
                           &br[0], &br[1], &br[2], &br[3]), 4);
     const std::string content = bytes.substr(static_cast<std::size_t>(br[0]),
                                              static_cast<std::size_t>(br[1])) +
@@ -271,7 +280,16 @@ TEST(PdfFileSignaturePfx, OpenSslVerifiesPfxSignature) {
     WriteFile(cpath, content);
     WriteFile(dpath, der);
     const std::string cmd = "openssl cms -verify -binary -inform DER -in '" + dpath +
-                            "' -content '" + cpath + "' -CAfile '" + Pfx("ca.pem") +
+                            "' -content '" + cpath + "' -CAfile '" + Pfx(ca) +
                             "' -purpose any -out /dev/null 2>/dev/null";
-    EXPECT_EQ(std::system(cmd.c_str()), 0);
+    EXPECT_EQ(std::system(cmd.c_str()), 0) << pfx;
+}
+
+TEST(PdfFileSignaturePfx, OpenSslVerifiesPfxSignature) {
+    if (std::system("command -v openssl >/dev/null 2>&1") != 0)
+        GTEST_SKIP() << "openssl CLI not available";
+    OpenSslVerify("signer_aes.p12", "ca.pem");
+    OpenSslVerify("ec256.p12", "ec_ca.pem");
+    OpenSslVerify("ec384.p12", "ec_ca.pem");
+    OpenSslVerify("ec521.p12", "ec_ca.pem");
 }

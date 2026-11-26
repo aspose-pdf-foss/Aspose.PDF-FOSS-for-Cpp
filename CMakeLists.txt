@@ -218,6 +218,7 @@ set(ASPOSE_PDF_FOSS_SOURCES
   src/internal/field_appearance.cpp
   src/internal/crypto.cpp
   src/internal/der.cpp
+  src/internal/ec.cpp
   src/internal/pkcs12.cpp
   src/internal/pkcs7_verify.cpp
   src/internal/rc4.cpp

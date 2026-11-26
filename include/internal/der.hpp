@@ -45,6 +45,8 @@ struct Certificate {
     std::string subject_cn;             // subject commonName ("" if none)
     std::vector<std::byte> modulus;     // RSA public key (empty: not RSA)
     std::vector<std::byte> exponent;
+    std::string ec_curve_oid;           // EC public key: namedCurve OID
+    std::vector<std::byte> ec_point;    // ... and its point (uncompressed)
 };
 
 // Parse a DER X.509 certificate. Throws std::runtime_error when malformed.

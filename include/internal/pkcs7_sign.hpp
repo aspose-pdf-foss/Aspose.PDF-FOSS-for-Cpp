@@ -37,6 +37,9 @@ struct Signer {
     std::vector<std::byte> serial;       // its serialNumber INTEGER TLV, DER
     std::vector<std::vector<std::byte>> chain;  // further certificates, DER
     std::string name;                    // subject commonName
+    // An EC signer instead of RSA: namedCurve OID and the scalar d.
+    std::string ec_curve_oid;
+    std::vector<std::byte> ec_private;
 };
 
 // The bundled test signer.
@@ -46,7 +49,8 @@ Signer BundledSigner();
 Signer SignerFromPkcs12(std::span<const std::byte> pfx, const std::string& password);
 
 // Build a detached SignedData (DER) over `content`, signed by `signer`
-// (SHA-256, RSA PKCS#1 v1.5; the certificate and chain embedded).
+// (RSA: SHA-256 with PKCS#1 v1.5; EC: ECDSA with SHA-256 / 384 / 512 for
+// P-256 / 384 / 521; the certificate and chain embedded).
 // `signing_time_utc` is a 13-character UTCTime ("YYMMDDHHMMSSZ"). Throws
 // std::runtime_error when the key is too small or malformed.
 std::vector<std::byte> SignDetached(std::span<const std::byte> content,

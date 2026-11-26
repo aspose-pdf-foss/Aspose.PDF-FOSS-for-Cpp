@@ -107,11 +107,11 @@ public:
     // ---- Verify / read ----
 
     // True when the named signature verifies: the digest of its signed
-    // byte ranges matches the CMS messageDigest and the RSA signature
-    // checks out with the embedded signer certificate. False for an
-    // unknown name, a blank field, a modified document or an unsupported
-    // signature (e.g. RSA-PSS, ECDSA). Certificate trust and revocation
-    // are not checked.
+    // byte ranges matches the CMS messageDigest and the RSA or ECDSA
+    // (P-256/384/521) signature checks out with the embedded signer
+    // certificate. False for an unknown name, a blank field, a modified
+    // document or an unsupported signature (e.g. RSA-PSS). Certificate
+    // trust and revocation are not checked.
     bool VerifySigned(const std::string& sigName);
     bool VerifySignature(const std::string& sigName);
     bool VerifySignature(const SignatureName& sigName);

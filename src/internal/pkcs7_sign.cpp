@@ -7,6 +7,8 @@
 #include "digest.hpp"
 #include "pkcs7_keymat.hpp"
 #include "pkcs12.hpp"
+#include "crypto.hpp"
+#include "ec.hpp"
 
 namespace foundation::pkcs7 {
 
@@ -102,6 +104,26 @@ const Bytes kOidMdigest = FromHex("2a864886f70d010904");  // ...1.9.4
 const Bytes kOidSigTime = FromHex("2a864886f70d010905");  // ...1.9.5
 
 Bytes AlgSha256() { return DerSeq(Concat({DerOid(kOidSha256), DerNull()})); }
+
+Bytes AlgDigest(crypto::Hash h) {
+    switch (h) {
+        case crypto::Hash::Sha384:
+            return DerSeq(Concat({DerOid(FromHex("608648016503040202")), DerNull()}));
+        case crypto::Hash::Sha512:
+            return DerSeq(Concat({DerOid(FromHex("608648016503040203")), DerNull()}));
+        default:
+            return AlgSha256();
+    }
+}
+
+// ecdsa-with-SHA256 / 384 / 512 (no parameters, RFC 5758).
+Bytes AlgEcdsa(crypto::Hash h) {
+    switch (h) {
+        case crypto::Hash::Sha384: return DerSeq(DerOid(FromHex("2a8648ce3d040303")));
+        case crypto::Hash::Sha512: return DerSeq(DerOid(FromHex("2a8648ce3d040304")));
+        default: return DerSeq(DerOid(FromHex("2a8648ce3d040302")));
+    }
+}
 Bytes AlgRsa() { return DerSeq(Concat({DerOid(kOidRsa), DerNull()})); }
 
 // ---- RSA PKCS#1 v1.5 signature over SHA-256(message) -----------------------
@@ -164,6 +186,8 @@ Signer SignerFromPkcs12(std::span<const std::byte> pfx, const std::string& passw
     s.serial = c.signer.serial;
     for (const auto& cert : c.chain) s.chain.push_back(cert.der);
     s.name = c.signer.subject_cn;
+    s.ec_curve_oid = c.key.ec_curve_oid;
+    s.ec_private = c.key.ec_private;
     return s;
 }
 
@@ -176,7 +200,14 @@ Bytes SignDetached(std::span<const std::byte> content,
                    const std::string& signing_time_utc,
                    const Signer& signer) {
     const Bytes content_vec(content.begin(), content.end());
-    const auto content_digest = digest::Sha256(content);
+    const ec::Curve* curve = nullptr;
+    if (!signer.ec_curve_oid.empty()) {
+        curve = ec::CurveByOid(signer.ec_curve_oid);
+        if (curve == nullptr)
+            throw std::runtime_error("foundation::pkcs7: unsupported EC curve");
+    }
+    const crypto::Hash hash = curve ? curve->hash : crypto::Hash::Sha256;
+    const auto content_digest = crypto::HashOf(hash, content);
 
     // Authenticated (signed) attributes, in ascending DER order
     // (contentType < messageDigest < signingTime by OID value).
@@ -194,16 +225,19 @@ Bytes SignDetached(std::span<const std::byte> content,
 
     // Sign the DER of the attributes as an explicit SET OF (tag 0x31).
     const Bytes signed_attrs_der = DerSet(attrs_concat);
-    const Bytes signature = RsaSignSha256(signed_attrs_der, signer);
+    const Bytes signature =
+        curve ? ec::SignDigest(*curve, signer.ec_private,
+                               crypto::HashOf(hash, signed_attrs_der), hash)
+              : RsaSignSha256(signed_attrs_der, signer);
 
     // SignerInfo.
     const Bytes sid = DerSeq(Concat({signer.issuer, signer.serial}));
     const Bytes signer_info = DerSeq(Concat({
         DerIntSmall(1),                     // version
         sid,                                // issuerAndSerialNumber
-        AlgSha256(),                        // digestAlgorithm
+        AlgDigest(hash),                    // digestAlgorithm
         Tlv(0xA0, attrs_concat),            // signedAttrs [0] IMPLICIT
-        AlgRsa(),                           // signatureAlgorithm
+        curve ? AlgEcdsa(hash) : AlgRsa(),  // signatureAlgorithm
         DerOctet(signature),                // signature
     }));
 
@@ -213,7 +247,7 @@ Bytes SignDetached(std::span<const std::byte> content,
     // SignedData.
     const Bytes signed_data = DerSeq(Concat({
         DerIntSmall(1),                     // version
-        DerSet(AlgSha256()),                // digestAlgorithms
+        DerSet(AlgDigest(hash)),            // digestAlgorithms
         encap,                              // encapContentInfo
         Tlv(0xA0, [&] {                     // certificates [0] IMPLICIT
             Bytes certs = signer.certificate;

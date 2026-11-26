@@ -4,6 +4,7 @@
 
 #include "aes_cbc.hpp"
 #include "crypto.hpp"
+#include "ec.hpp"
 
 namespace foundation::pkcs12 {
 
@@ -83,19 +84,41 @@ Bytes Decrypt(const Node& alg, std::span<const std::byte> data,
     Fail("unsupported encryption " + oid);
 }
 
-// PrivateKeyInfo (PKCS#8) -> the RSA key.
-RsaPrivateKey ParsePrivateKeyInfo(std::span<const std::byte> der_bytes) {
+// PrivateKeyInfo (PKCS#8) -> the RSA or EC key.
+PrivateKey ParsePrivateKeyInfo(std::span<const std::byte> der_bytes) {
     const auto pki = Children(der::ReadOne(der_bytes));
-    if (pki.size() < 3 || Oid(Children(pki[1]).at(0)) != kRsa)
-        Fail("the private key is not RSA (only RSA keys are supported)");
-    const auto rsa = Children(der::ReadOne(pki[2].content));
-    if (rsa.size() < 4) Fail("bad RSAPrivateKey");
-    return {der::UnsignedInteger(rsa[1]), der::UnsignedInteger(rsa[2]),
-            der::UnsignedInteger(rsa[3])};
+    if (pki.size() < 3) Fail("bad PrivateKeyInfo");
+    const auto alg = Children(pki[1]);
+    const std::string alg_oid = Oid(alg.at(0));
+    PrivateKey key;
+    if (alg_oid == kRsa) {
+        const auto rsa = Children(der::ReadOne(pki[2].content));
+        if (rsa.size() < 4) Fail("bad RSAPrivateKey");
+        key.modulus = der::UnsignedInteger(rsa[1]);
+        key.public_exponent = der::UnsignedInteger(rsa[2]);
+        key.private_exponent = der::UnsignedInteger(rsa[3]);
+        return key;
+    }
+    if (alg_oid == "1.2.840.10045.2.1") {  // id-ecPublicKey
+        if (alg.size() >= 2 && alg[1].tag == 0x06) key.ec_curve_oid = Oid(alg[1]);
+        const auto ecpk = Children(der::ReadOne(pki[2].content));  // ECPrivateKey
+        if (ecpk.size() < 2 || ecpk[1].tag != 0x04) Fail("bad ECPrivateKey");
+        key.ec_private.assign(ecpk[1].content.begin(), ecpk[1].content.end());
+        for (std::size_t i = 2; i < ecpk.size(); ++i)
+            if (ecpk[i].tag == 0xA0 && key.ec_curve_oid.empty())
+                key.ec_curve_oid = Oid(der::ReadOne(ecpk[i].content));
+        const ec::Curve* curve = ec::CurveByOid(key.ec_curve_oid);
+        if (curve == nullptr)
+            Fail("unsupported EC curve " + key.ec_curve_oid +
+                 " (P-256, P-384 and P-521 are supported)");
+        key.ec_public = ec::PublicKey(*curve, key.ec_private);
+        return key;
+    }
+    Fail("unsupported private key type " + alg_oid + " (RSA and EC are supported)");
 }
 
 void ReadSafeContents(std::span<const std::byte> safe, const std::string& password,
-                      std::vector<RsaPrivateKey>& keys, std::vector<der::Certificate>& certs) {
+                      std::vector<PrivateKey>& keys, std::vector<der::Certificate>& certs) {
     for (const Node& bag : Children(der::ReadOne(safe))) {
         const auto parts = Children(bag);
         if (parts.size() < 2) continue;
@@ -142,7 +165,7 @@ Contents Parse(std::span<const std::byte> pfx, const std::string& password) {
         if (expected != Copy(digest_info.at(1).content)) Fail("wrong password");
     }
 
-    std::vector<RsaPrivateKey> keys;
+    std::vector<PrivateKey> keys;
     std::vector<der::Certificate> certs;
     for (const Node& ci : Children(der::ReadOne(safe_bytes))) {
         const auto parts = Children(ci);
@@ -162,7 +185,11 @@ Contents Parse(std::span<const std::byte> pfx, const std::string& password) {
     out.key = keys.front();
     bool found = false;
     for (auto& c : certs) {
-        if (!found && c.modulus == out.key.modulus) {
+        const bool matches = out.key.ec_curve_oid.empty()
+                                 ? c.modulus == out.key.modulus
+                                 : c.ec_curve_oid == out.key.ec_curve_oid &&
+                                       c.ec_point == out.key.ec_public;
+        if (!found && matches) {
             out.signer = std::move(c);
             found = true;
         } else {

@@ -12,15 +12,16 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 ### Added
 
 - Digital signatures with your own certificate: `PdfFileSignature::Sign` / `Certify` sign with the
-  RSA key in a PKCS#12 file, either the `Signature(pfx, password)` one or the one from
+  RSA or EC key (ECDSA on P-256 / P-384 / P-521, with SHA-256 / 384 / 512 and RFC 6979
+  deterministic nonces) in a PKCS#12 file, either the `Signature(pfx, password)` one or the one from
   `SetCertificate` (PBES2 / AES and legacy 3DES / RC2 files; a wrong password throws). Without a
   certificate the bundled test key is used, as before.
 - Signature verification: `PdfFileSignature::VerifySignature` / `VerifySigned` and
   `Signature::Verify` (on a loaded document's signature field) check the digest of the signed byte
-  ranges and the RSA PKCS#1 v1.5 signature (`adbe.pkcs7.detached`, `ETSI.CAdES.detached`,
-  `adbe.pkcs7.sha1`). They return false for a modified document. Certificate trust and
-  revocation are not checked. RSA-PSS and ECDSA signatures are not supported yet and also
-  return false.
+  ranges and the RSA PKCS#1 v1.5 or ECDSA signature (`adbe.pkcs7.detached`,
+  `ETSI.CAdES.detached`, `adbe.pkcs7.sha1`). They return false for a modified document.
+  Certificate trust and revocation are not checked. RSA-PSS signatures are not supported yet and
+  also return false.
 - `Certify` writes a DocMDP certification (`/Reference` transform with the chosen access
   permissions, catalog `/Perms /DocMDP`); `GetAccessPermissions` and `IsCertified` read it from
   loaded documents.

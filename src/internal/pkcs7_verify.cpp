@@ -5,6 +5,7 @@
 
 #include "bigint.hpp"
 #include "crypto.hpp"
+#include "ec.hpp"
 
 namespace foundation::pkcs7 {
 
@@ -98,8 +99,18 @@ Verification VerifyDetached(std::span<const std::byte> cms,
             v.error = "RSA-PSS signatures are not supported";
             return v;
         }
-        if (sig_oid.rfind("1.2.840.113549.1.1.", 0) != 0) {
-            v.error = "only RSA signatures are supported";
+        const bool is_rsa = sig_oid.rfind("1.2.840.113549.1.1.", 0) == 0;
+        // ECDSA: ecdsa-with-SHA* names its hash; bare id-ecPublicKey uses
+        // the digest algorithm.
+        crypto::Hash ecdsa_hash = h;
+        bool is_ecdsa = true;
+        if (sig_oid == "1.2.840.10045.4.1") ecdsa_hash = crypto::Hash::Sha1;
+        else if (sig_oid == "1.2.840.10045.4.3.2") ecdsa_hash = crypto::Hash::Sha256;
+        else if (sig_oid == "1.2.840.10045.4.3.3") ecdsa_hash = crypto::Hash::Sha384;
+        else if (sig_oid == "1.2.840.10045.4.3.4") ecdsa_hash = crypto::Hash::Sha512;
+        else if (sig_oid != "1.2.840.10045.2.1") is_ecdsa = false;
+        if (!is_rsa && !is_ecdsa) {
+            v.error = "unsupported signature algorithm " + sig_oid;
             return v;
         }
 
@@ -151,14 +162,17 @@ Verification VerifyDetached(std::span<const std::byte> cms,
         }
         if (candidates.empty())
             for (const auto& c : certs) candidates.push_back(&c);
+        // Without signed attributes the signature covers the content
+        // itself (RsaVerify hashes its message), else the attributes.
+        const Bytes& message = raw_digest ? data : signed_bytes;
         for (const der::Certificate* c : candidates) {
-            bool ok;
-            if (raw_digest) {
-                // Signature directly over the content digest: RsaVerify
-                // hashes its message, so compare against `data` instead.
-                ok = RsaVerify(*c, data, signature.content);
-            } else {
-                ok = RsaVerify(*c, signed_bytes, signature.content);
+            bool ok = false;
+            if (is_rsa) {
+                ok = RsaVerify(*c, message, signature.content);
+            } else if (const ec::Curve* curve = ec::CurveByOid(c->ec_curve_oid)) {
+                ok = ec::VerifyDigest(*curve, c->ec_point,
+                                      crypto::HashOf(ecdsa_hash, message),
+                                      signature.content);
             }
             if (ok) {
                 v.valid = true;
