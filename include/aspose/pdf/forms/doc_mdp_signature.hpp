@@ -10,6 +10,8 @@
 #include <aspose/pdf/forms/doc_mdp_access_permissions.hpp>
 #include <aspose/pdf/forms/signature.hpp>
 
+namespace Aspose::Pdf::Facades { class PdfFileSignature; }
+
 namespace Aspose::Pdf::Forms {
 
 class DocMDPSignature {
@@ -21,6 +23,7 @@ public:
 
 private:
     Signature* signature_ = nullptr;
+    friend class Aspose::Pdf::Facades::PdfFileSignature;
     DocMDPAccessPermissions access_permissions_ =
         DocMDPAccessPermissions::NoChanges;
 };

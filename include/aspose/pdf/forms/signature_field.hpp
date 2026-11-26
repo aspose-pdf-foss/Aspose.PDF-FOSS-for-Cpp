@@ -19,6 +19,8 @@
 //   * ExtractCertificateObject() — X509Certificate2 cascade
 // =============================================================================
 
+#include <memory>
+
 #include <aspose/pdf/forms/field.hpp>
 #include <aspose/pdf/rectangle.hpp>
 
@@ -50,6 +52,10 @@ public:
 
 private:
     Forms::Signature* signature_ = nullptr;
+    // The signature read from a loaded document's /V.
+    std::shared_ptr<Forms::Signature> loaded_signature_;
+
+    friend class Aspose::Pdf::Document;
 };
 
 }  // namespace Aspose::Pdf::Forms

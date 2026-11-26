@@ -94,7 +94,8 @@ public:
     int GetRevision(const SignatureName& sigName);
     int GetTotalRevision();
 
-    // ---- Remove (v1: no-op — needs revision rewrite) ----
+    // ---- Remove (incremental update; RemoveSignature(name) drops the
+    // field too, keepFieldEmpty keeps an empty signature field) ----
 
     void RemoveUsageRights();
     void RemoveSignature(const std::string& sigName);
@@ -105,10 +106,12 @@ public:
 
     // ---- Verify / read ----
 
-    // v1: returns false when `sigName` has no signature (unknown name or
-    // blank field). For a present signature it throws std::logic_error:
-    // there is no cryptographic verification yet, and presence alone is
-    // not reported as valid.
+    // True when the named signature verifies: the digest of its signed
+    // byte ranges matches the CMS messageDigest and the RSA signature
+    // checks out with the embedded signer certificate. False for an
+    // unknown name, a blank field, a modified document or an unsupported
+    // signature (e.g. RSA-PSS, ECDSA). Certificate trust and revocation
+    // are not checked.
     bool VerifySigned(const std::string& sigName);
     bool VerifySignature(const std::string& sigName);
     bool VerifySignature(const SignatureName& sigName);

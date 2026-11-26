@@ -68,7 +68,7 @@ class PageCollection;
 
 namespace Annotations { class AnnotationCollection; }
 namespace Annotations { class RedactionAnnotation; }
-namespace Forms { class Form; class Field; }
+namespace Forms { class Form; class Field; class Signature; }
 namespace Facades { class PdfFileEditor; }
 namespace Facades { class PdfBookmarkEditor; }
 namespace Facades { class PdfFileStamp; }
@@ -106,6 +106,12 @@ public:
         std::string date_pdf;
         std::string signing_time_utc;
         std::size_t contents_capacity = 8192;
+        // The signer: a PKCS#12 file and its password (empty: the bundled
+        // test signer). `name` defaults to the certificate's common name.
+        std::string pfx_path;
+        std::string pfx_password;
+        // Certifying signature: the DocMDP /P value (1..3), 0 = approval.
+        int docmdp_permissions = 0;
     };
 
     // One read-back signature (backs PdfFileSignature enumerate / read /
@@ -120,6 +126,26 @@ public:
         std::vector<int> byte_range;
         bool has_value = false;   // /V present (false => blank sig field)
         bool covers_whole = false;
+        std::string sub_filter;            // /SubFilter
+        std::vector<std::byte> contents;   // /Contents (the CMS blob)
+        int docmdp_permissions = 0;        // /Reference DocMDP /P, 0 = none
+    };
+
+    // Result of checking one signature (backs VerifySignature /
+    // Signature::Verify).
+    struct SignatureCheck {
+        bool found = false;       // a signature field with that name
+        bool has_value = false;   // ... and it is signed
+        bool valid = false;       // the CMS signature verifies
+        std::string error;
+        std::string signer_name;  // the signer certificate's common name
+    };
+
+    // Document-level signature state from the catalog.
+    struct CatalogSignatureState {
+        bool usage_rights = false;   // /Perms /UR3 (or /UR)
+        bool dss = false;            // /DSS (LTV material)
+        int docmdp_permissions = 0;  // /Perms /DocMDP signature's /P
     };
 
     // Staged-write outline tree node (backs PdfBookmarkEditor and the public
@@ -365,6 +391,7 @@ private:
     friend class Aspose::Pdf::Facades::PdfExtractor;
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
     friend class Aspose::Pdf::Facades::FormEditor;
+    friend class Aspose::Pdf::Forms::Signature;
     // 1-based page of `field`'s (first) widget; 0 when unknown.
     int FieldPageNumberInternal(const Forms::Field& field) const;
 
@@ -692,6 +719,21 @@ private:
     // resolving /V to its /Sig dict. Backs the PdfFileSignature
     // enumerate / read / verify surface.
     std::vector<SignatureInfo> ReadSignaturesInternal() const;
+
+    // Verify the named signature: digest of its /ByteRange against the
+    // detached CMS in /Contents and the RSA signature (foundation::pkcs7).
+    // Trust chain and revocation are not checked.
+    SignatureCheck VerifySignatureInternal(const std::string& field_name) const;
+
+    // Remove the named signature (all signatures when `field_name` is
+    // empty), via an incremental update: `keep_field` keeps an empty
+    // signature field, otherwise the field and its widgets go too. A
+    // removed certifying signature also leaves the catalog /Perms.
+    void RemoveSignatureInternal(const std::string& field_name, bool keep_field);
+
+    CatalogSignatureState ReadCatalogSignatureStateInternal() const;
+    // Drop /Perms /UR3 and /UR (usage rights) from the catalog.
+    void RemoveUsageRightsInternal();
 
     // Replace the literal `(src)` text operand with `(dest)` in the
     // content stream(s) of the given page (1-based; 0 = all pages).

@@ -6,6 +6,7 @@
 #include "bigint.hpp"
 #include "digest.hpp"
 #include "pkcs7_keymat.hpp"
+#include "pkcs12.hpp"
 
 namespace foundation::pkcs7 {
 
@@ -150,6 +151,19 @@ Signer BundledSigner() {
     s.issuer = FromHex(keymat::kIssuerDerHex);
     s.serial = FromHex(keymat::kSerialTlvHex);
     s.name = BundledSignerName();
+    return s;
+}
+
+Signer SignerFromPkcs12(std::span<const std::byte> pfx, const std::string& password) {
+    const auto c = pkcs12::Parse(pfx, password);
+    Signer s;
+    s.modulus = c.key.modulus;
+    s.private_exponent = c.key.private_exponent;
+    s.certificate = c.signer.der;
+    s.issuer = c.signer.issuer;
+    s.serial = c.signer.serial;
+    for (const auto& cert : c.chain) s.chain.push_back(cert.der);
+    s.name = c.signer.subject_cn;
     return s;
 }
 

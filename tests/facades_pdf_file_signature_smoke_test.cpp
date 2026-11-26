@@ -189,7 +189,6 @@ TEST(FacadesPdfFileSignatureRealSigning, SignAddsReadableSignature) {
     {
         Document doc{HelloWorldPdf()};
         PdfFileSignature sig{doc, out};
-        sig.SetCertificate("test.pfx", "pw");
         Aspose::Pdf::Forms::PKCS7 cert;
         sig.Sign("Signature1", "I approve this document", "signer@example.com",
                  "Prague", cert);
@@ -214,14 +213,13 @@ TEST(FacadesPdfFileSignatureRealSigning, SignAddsReadableSignature) {
     EXPECT_EQ(reader.GetContactInfo("Signature1"), "signer@example.com");
     EXPECT_EQ(reader.GetLocation("Signature1"), "Prague");
     EXPECT_TRUE(reader.CoversWholeDocument("Signature1"));
-    // No cryptographic verification exists yet, so a present signature
-    // must not be reported as valid: Verify* throws std::logic_error.
-    EXPECT_THROW(reader.VerifySignature("Signature1"), std::logic_error);
-    EXPECT_THROW(reader.VerifySigned("Signature1"), std::logic_error);
+    // The bundled-key signature verifies cryptographically.
+    EXPECT_TRUE(reader.VerifySignature("Signature1"));
+    EXPECT_TRUE(reader.VerifySigned("Signature1"));
     SignatureName signedName;
     signedName.FullName = "Signature1";
     signedName.Name = "Signature1";
-    EXPECT_THROW(reader.VerifySignature(signedName), std::logic_error);
+    EXPECT_TRUE(reader.VerifySignature(signedName));
     // A name with no signature is still a plain `false`.
     EXPECT_FALSE(reader.VerifySignature("NoSuchSignature"));
 

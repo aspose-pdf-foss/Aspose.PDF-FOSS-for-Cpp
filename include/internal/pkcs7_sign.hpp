@@ -41,6 +41,9 @@ struct Signer {
 
 // The bundled test signer.
 Signer BundledSigner();
+// The signer in a PKCS#12 file (throws std::runtime_error on a wrong
+// password or an unsupported / malformed file).
+Signer SignerFromPkcs12(std::span<const std::byte> pfx, const std::string& password);
 
 // Build a detached SignedData (DER) over `content`, signed by `signer`
 // (SHA-256, RSA PKCS#1 v1.5; the certificate and chain embedded).

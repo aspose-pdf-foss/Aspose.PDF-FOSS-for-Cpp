@@ -58,9 +58,9 @@ TEST(FormsSignatureHierarchySmoke, SignatureAccessorRoundtrip) {
     EXPECT_TRUE(sig.ByteRange().empty());
 }
 
-TEST(FormsSignatureHierarchySmoke, VerifyThrowsUntilVerificationExists) {
-    // There is no cryptographic verification path yet, so Verify() must
-    // not report success: it throws std::logic_error instead.
+TEST(FormsSignatureHierarchySmoke, UnboundVerifyThrows) {
+    // A Signature built to sign with is not bound to signed bytes, so
+    // Verify() must not report success: it throws std::logic_error.
     PKCS7 sig{"/etc/cert.pfx", "p7pass"};
     EXPECT_THROW(sig.Verify(), std::logic_error);
     PKCS7 blank;

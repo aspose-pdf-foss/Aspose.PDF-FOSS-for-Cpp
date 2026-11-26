@@ -69,6 +69,7 @@
 #include <aspose/pdf/forms/password_box_field.hpp>
 #include <aspose/pdf/forms/radio_button_field.hpp>
 #include <aspose/pdf/forms/rich_text_box_field.hpp>
+#include <aspose/pdf/forms/signature.hpp>
 #include <aspose/pdf/forms/signature_field.hpp>
 #include <aspose/pdf/forms/text_box_field.hpp>
 #include <aspose/pdf/metadata.hpp>
@@ -87,6 +88,7 @@
 #include "outlines.hpp"
 #include "pages_tree.hpp"
 #include "pkcs7_sign.hpp"
+#include "pkcs7_verify.hpp"
 #include "png_decoder.hpp"
 #include "truetype.hpp"
 #include "pdf_writer_incremental.hpp"
@@ -8067,7 +8069,31 @@ void Document::LoadAcroFormFields(Aspose::Pdf::Forms::Form& form) {
         const Aspose::Pdf::Rectangle rect0(0.0, 0.0, 0.0, 0.0, false);
         std::unique_ptr<F::Field> field;
         if (ft == "Sig") {
-            field = std::make_unique<F::SignatureField>(*this, rect0);
+            auto sf = std::make_unique<F::SignatureField>(*this, rect0);
+            const auto* vv = DictGet(*fdict, "V");
+            const auto* vr =
+                vv ? std::get_if<foundation::objects::Ref>(&vv->v) : nullptr;
+            const auto* so = vr ? FindObject(dump, vr->id) : nullptr;
+            const auto* sd =
+                so ? std::get_if<foundation::objects::Dict>(&so->value.v)
+                   : nullptr;
+            if (sd != nullptr) {
+                auto s = std::make_shared<F::Signature>();
+                s->document_ = this;
+                s->field_name_ = t;
+                s->Reason(ReadStrOrName(DictGet(*sd, "Reason")));
+                s->Location(ReadStrOrName(DictGet(*sd, "Location")));
+                s->ContactInfo(ReadStrOrName(DictGet(*sd, "ContactInfo")));
+                if (const auto* br = DictGet(*sd, "ByteRange"))
+                    if (const auto* arr =
+                            std::get_if<foundation::objects::Array>(&br->v))
+                        for (const auto& e : arr->items)
+                            if (const auto* n = std::get_if<std::int64_t>(&e.v))
+                                s->byte_range_.push_back(static_cast<int>(*n));
+                sf->signature_ = s.get();
+                sf->loaded_signature_ = std::move(s);
+            }
+            field = std::move(sf);
         } else if (ft == "Btn") {
             if (ff & (1LL << 16))
                 field = std::make_unique<F::ButtonField>(*this, rect0);
@@ -10688,6 +10714,62 @@ foundation::objects::Value SigRefVal(std::uint32_t id) {
     return v;
 }
 
+// Follow one indirect reference.
+const foundation::objects::Value* SigResolve(
+        const foundation::objects::Dump& dump,
+        const foundation::objects::Value* v) {
+    if (v == nullptr) return nullptr;
+    if (const auto* r = std::get_if<foundation::objects::Ref>(&v->v)) {
+        const auto* o = FindObject(dump, r->id);
+        return o ? &o->value : nullptr;
+    }
+    return v;
+}
+
+const foundation::objects::Dict* SigResolveDict(
+        const foundation::objects::Dump& dump,
+        const foundation::objects::Value* v) {
+    const auto* r = SigResolve(dump, v);
+    return r ? std::get_if<foundation::objects::Dict>(&r->v) : nullptr;
+}
+
+bool SigErase(foundation::objects::Dict& d, const char* key) {
+    bool erased = false;
+    for (auto it = d.entries.begin(); it != d.entries.end();) {
+        if (it->first == key) { it = d.entries.erase(it); erased = true; }
+        else ++it;
+    }
+    return erased;
+}
+
+void SigSet(foundation::objects::Dict& d, const char* key,
+            foundation::objects::Value v) {
+    SigErase(d, key);
+    d.entries.emplace_back(key, std::move(v));
+}
+
+// The DocMDP /P of a /Sig dict's /Reference (0 when not certifying).
+int SigDocMdp(const foundation::objects::Dump& dump,
+              const foundation::objects::Dict& sig) {
+    const auto* rv = SigResolve(dump, DictGet(sig, "Reference"));
+    const auto* refs = rv ? std::get_if<foundation::objects::Array>(&rv->v) : nullptr;
+    if (refs == nullptr) return 0;
+    for (const auto& item : refs->items) {
+        const auto* sr = SigResolveDict(dump, &item);
+        if (sr == nullptr) continue;
+        const auto* tm = DictGet(*sr, "TransformMethod");
+        const auto* tm_name = tm ? std::get_if<std::string>(&tm->v) : nullptr;
+        if (tm_name == nullptr || *tm_name != "DocMDP") continue;
+        int p = 2;  // PDF 32000 12.8.2.2: default /P is 2
+        if (const auto* tp = SigResolveDict(dump, DictGet(*sr, "TransformParams")))
+            if (const auto* pv = DictGet(*tp, "P"))
+                if (const auto* n = std::get_if<std::int64_t>(&pv->v))
+                    p = static_cast<int>(*n);
+        return p;
+    }
+    return 0;
+}
+
 // Resolve an AcroForm Value (Ref or inline Dict) to its dict, recording the
 // indirect id (0 when inline / absent).
 std::string DecodePdfStr(const foundation::objects::Value* v) {
@@ -10724,6 +10806,28 @@ void Document::SignInternal(const SignatureRequest& req) {
         throw std::runtime_error(
             "Aspose::Pdf::Document: cannot sign a document with no pages");
     }
+
+    // The signer: the PKCS#12 file when given, else the bundled test key.
+    foundation::pkcs7::Signer signer = foundation::pkcs7::BundledSigner();
+    if (!req.pfx_path.empty()) {
+        std::ifstream in(req.pfx_path, std::ios::binary);
+        if (!in) {
+            throw std::runtime_error(
+                "Aspose::Pdf::Document: cannot read certificate file " +
+                req.pfx_path);
+        }
+        std::vector<char> raw((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+        signer = foundation::pkcs7::SignerFromPkcs12(
+            std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(raw.data()), raw.size()),
+            req.pfx_password);
+    }
+    const std::string signer_name = req.name.empty() ? signer.name : req.name;
+    // Reserve room for the CMS: its size does not depend on the content.
+    const std::size_t capacity = std::max(
+        req.contents_capacity,
+        foundation::pkcs7::SignDetached({}, req.signing_time_utc, signer).size() + 32);
 
     // Resolve any existing AcroForm and its /Fields.
     std::uint32_t acroform_id = 0;
@@ -10764,8 +10868,8 @@ void Document::SignInternal(const SignatureRequest& req) {
             sig.entries.emplace_back("Filter", SigNameVal("Adobe.PPKLite"));
             sig.entries.emplace_back("SubFilter",
                                      SigNameVal("adbe.pkcs7.detached"));
-            if (!req.name.empty())
-                sig.entries.emplace_back("Name", SigLiteralVal(req.name));
+            if (!signer_name.empty())
+                sig.entries.emplace_back("Name", SigLiteralVal(signer_name));
             if (!req.reason.empty())
                 sig.entries.emplace_back("Reason", SigLiteralVal(req.reason));
             if (!req.location.empty())
@@ -10776,10 +10880,28 @@ void Document::SignInternal(const SignatureRequest& req) {
                                          SigLiteralVal(req.contact));
             if (!req.date_pdf.empty())
                 sig.entries.emplace_back("M", SigLiteralVal(req.date_pdf));
+            if (req.docmdp_permissions != 0) {
+                // Certifying signature: a DocMDP transform (PDF 32000 12.8.2.2).
+                foundation::objects::Dict params;
+                params.entries.emplace_back("Type", SigNameVal("TransformParams"));
+                params.entries.emplace_back(
+                    "P", foundation::objects::Value(
+                             static_cast<std::int64_t>(req.docmdp_permissions)));
+                params.entries.emplace_back("V", SigNameVal("1.2"));
+                foundation::objects::Dict sigref;
+                sigref.entries.emplace_back("Type", SigNameVal("SigRef"));
+                sigref.entries.emplace_back("TransformMethod", SigNameVal("DocMDP"));
+                sigref.entries.emplace_back(
+                    "TransformParams", foundation::objects::Value(std::move(params)));
+                foundation::objects::Array refs;
+                refs.items.emplace_back(std::move(sigref));
+                sig.entries.emplace_back("Reference",
+                                         foundation::objects::Value(std::move(refs)));
+            }
             sig.entries.emplace_back("ByteRange", SigIntArray(byte_range));
             {
                 foundation::objects::String contents;
-                contents.bytes.assign(req.contents_capacity, std::byte{0});
+                contents.bytes.assign(capacity, std::byte{0});
                 contents.kind = foundation::objects::StringKind::Hex;
                 foundation::objects::Value v;
                 v.v = std::move(contents);
@@ -10866,18 +10988,21 @@ void Document::SignInternal(const SignatureRequest& req) {
                 d.generation = acro_obj ? acro_obj->generation : 0;
                 d.value.v = std::move(acro);
                 dirty.push_back(std::move(d));
-            } else {
-                // Inline (or new) AcroForm: write it into the catalog.
+            }
+            if (acroform_id == 0 || req.docmdp_permissions != 0) {
                 foundation::objects::Dict cat = *catalog_dict;
-                for (auto it = cat.entries.begin(); it != cat.entries.end();) {
-                    if (it->first == "AcroForm")
-                        it = cat.entries.erase(it);
-                    else
-                        ++it;
+                if (acroform_id == 0) {
+                    // Inline (or new) AcroForm: write it into the catalog.
+                    SigSet(cat, "AcroForm", foundation::objects::Value(std::move(acro)));
                 }
-                foundation::objects::Value av;
-                av.v = std::move(acro);
-                cat.entries.emplace_back("AcroForm", std::move(av));
+                if (req.docmdp_permissions != 0) {
+                    // /Perms /DocMDP points at the certifying signature.
+                    const auto* old = SigResolveDict(dump, DictGet(cat, "Perms"));
+                    foundation::objects::Dict perms =
+                        old ? *old : foundation::objects::Dict{};
+                    SigSet(perms, "DocMDP", SigRefVal(sig_value_id));
+                    SigSet(cat, "Perms", foundation::objects::Value(std::move(perms)));
+                }
                 foundation::pdf_writer_incremental::DirtyObject d;
                 d.id = catalog->id;
                 d.generation = catalog->generation;
@@ -10944,7 +11069,7 @@ void Document::SignInternal(const SignatureRequest& req) {
     const auto pkcs7 = foundation::pkcs7::SignDetached(
         std::span<const std::byte>(signed_content.data(),
                                    signed_content.size()),
-        req.signing_time_utc);
+        req.signing_time_utc, signer);
 
     const std::size_t gap = close_pos - (open_pos + 1);  // hex digits available
     if (pkcs7.size() * 2 > gap) {
@@ -11026,6 +11151,13 @@ Document::ReadSignaturesInternal() const {
                 info.reason = DecodePdfStr(DictGet(*sdict, "Reason"));
                 info.location = DecodePdfStr(DictGet(*sdict, "Location"));
                 info.contact = DecodePdfStr(DictGet(*sdict, "ContactInfo"));
+                if (const auto* sf = DictGet(*sdict, "SubFilter"))
+                    if (const auto* n = std::get_if<std::string>(&sf->v))
+                        info.sub_filter = *n;
+                if (const auto* cv = DictGet(*sdict, "Contents"))
+                    if (const auto* s = std::get_if<foundation::objects::String>(&cv->v))
+                        info.contents = s->bytes;
+                info.docmdp_permissions = SigDocMdp(dump, *sdict);
                 if (const auto* br = DictGet(*sdict, "ByteRange")) {
                     if (const auto* arr =
                             std::get_if<foundation::objects::Array>(&br->v)) {
@@ -11051,6 +11183,212 @@ Document::ReadSignaturesInternal() const {
         out.push_back(std::move(info));
     }
     return out;
+}
+
+Document::SignatureCheck Document::VerifySignatureInternal(
+        const std::string& field_name) const {
+    SignatureCheck check;
+    for (const auto& s : ReadSignaturesInternal()) {
+        if (s.field_name != field_name) continue;
+        check.found = true;
+        check.has_value = s.has_value;
+        if (!s.has_value) return check;
+        const auto& br = s.byte_range;
+        if (br.size() != 4 || br[0] < 0 || br[1] < 0 || br[2] < 0 || br[3] < 0 ||
+            static_cast<std::size_t>(br[0]) + static_cast<std::size_t>(br[1]) >
+                bytes_.size() ||
+            static_cast<std::size_t>(br[2]) + static_cast<std::size_t>(br[3]) >
+                bytes_.size()) {
+            check.error = "bad /ByteRange";
+            return check;
+        }
+        if (s.sub_filter != "adbe.pkcs7.detached" &&
+            s.sub_filter != "ETSI.CAdES.detached" &&
+            s.sub_filter != "adbe.pkcs7.sha1") {
+            check.error = "unsupported /SubFilter " + s.sub_filter;
+            return check;
+        }
+        std::vector<std::byte> content;
+        content.reserve(static_cast<std::size_t>(br[1]) + static_cast<std::size_t>(br[3]));
+        content.insert(content.end(), bytes_.begin() + br[0],
+                       bytes_.begin() + br[0] + br[1]);
+        content.insert(content.end(), bytes_.begin() + br[2],
+                       bytes_.begin() + br[2] + br[3]);
+        const auto v = foundation::pkcs7::VerifyDetached(s.contents, content);
+        check.valid = v.valid;
+        check.error = v.error;
+        check.signer_name = v.signer.subject_cn;
+        return check;
+    }
+    return check;
+}
+
+void Document::RemoveSignatureInternal(const std::string& field_name,
+                                       bool keep_field) {
+    namespace fo = foundation::objects;
+    using foundation::pdf_writer_incremental::DirtyObject;
+    auto base_span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto trailer_bundle = foundation::trailer::Parse(base_span);
+    const auto dump = fo::Parse(base_span);
+    const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+    const auto* catalog_dict =
+        catalog ? std::get_if<fo::Dict>(&catalog->value.v) : nullptr;
+    if (catalog_dict == nullptr) return;
+    std::uint32_t acroform_id = 0;
+    const auto* acro =
+        ResolveAcroForm(dump, DictGet(*catalog_dict, "AcroForm"), acroform_id);
+    if (acro == nullptr) return;
+    const auto* fv = DictGet(*acro, "Fields");
+    const auto* fields = fv ? std::get_if<fo::Array>(&fv->v) : nullptr;
+    if (fields == nullptr) return;
+
+    std::vector<DirtyObject> dirty;
+    std::set<std::uint32_t> removed_values, removed_widgets;
+    fo::Array kept;
+    for (const auto& item : fields->items) {
+        const auto* ref = std::get_if<fo::Ref>(&item.v);
+        const auto* fobj = ref ? FindObject(dump, ref->id) : nullptr;
+        const auto* fdict = fobj ? std::get_if<fo::Dict>(&fobj->value.v) : nullptr;
+        const fo::Ref* vref = nullptr;
+        if (fdict != nullptr) {
+            const auto* ft = DictGet(*fdict, "FT");
+            const auto* ft_name = ft ? std::get_if<std::string>(&ft->v) : nullptr;
+            const auto* vv = DictGet(*fdict, "V");
+            if (ft_name != nullptr && *ft_name == "Sig" && vv != nullptr &&
+                (field_name.empty() ||
+                 DecodePdfStr(DictGet(*fdict, "T")) == field_name))
+                vref = std::get_if<fo::Ref>(&vv->v);
+        }
+        if (vref == nullptr) {
+            kept.items.push_back(item);
+            continue;
+        }
+        removed_values.insert(vref->id);
+        if (keep_field) {
+            kept.items.push_back(item);
+            fo::Dict f = *fdict;
+            SigErase(f, "V");
+            dirty.push_back(DirtyObject{ref->id, fobj->generation, fo::Value(std::move(f))});
+        } else {
+            const auto* kv = DictGet(*fdict, "Kids");
+            const auto* kids = kv ? std::get_if<fo::Array>(&kv->v) : nullptr;
+            if (kids != nullptr && !kids->items.empty()) {
+                for (const auto& k : kids->items)
+                    if (const auto* kr = std::get_if<fo::Ref>(&k.v))
+                        removed_widgets.insert(kr->id);
+            } else {
+                removed_widgets.insert(ref->id);
+            }
+        }
+    }
+    if (removed_values.empty()) return;
+
+    // Drop the removed widgets from the pages' /Annots.
+    if (!removed_widgets.empty() && tree_) {
+        for (const auto& leaf : tree_->leaves) {
+            const auto* pobj = FindObject(dump, leaf.id);
+            const auto* pdict = pobj ? std::get_if<fo::Dict>(&pobj->value.v) : nullptr;
+            if (pdict == nullptr) continue;
+            const fo::Array annots = PageAnnotsArray(*pdict, dump);
+            fo::Array left;
+            for (const auto& a : annots.items) {
+                const auto* ar = std::get_if<fo::Ref>(&a.v);
+                if (ar != nullptr && removed_widgets.count(ar->id)) continue;
+                left.items.push_back(a);
+            }
+            if (left.items.size() == annots.items.size()) continue;
+            fo::Dict page = *pdict;
+            SigSet(page, "Annots", fo::Value(std::move(left)));
+            dirty.push_back(DirtyObject{leaf.id, pobj->generation, fo::Value(std::move(page))});
+        }
+    }
+
+    fo::Dict cat = *catalog_dict;
+    bool cat_changed = false;
+    if (const auto* perms = SigResolveDict(dump, DictGet(cat, "Perms"))) {
+        const auto* dm = DictGet(*perms, "DocMDP");
+        const auto* dr = dm ? std::get_if<fo::Ref>(&dm->v) : nullptr;
+        if (dr != nullptr && removed_values.count(dr->id)) {
+            fo::Dict p = *perms;
+            SigErase(p, "DocMDP");
+            SigErase(cat, "Perms");
+            if (!p.entries.empty()) SigSet(cat, "Perms", fo::Value(std::move(p)));
+            cat_changed = true;
+        }
+    }
+    if (!keep_field) {
+        fo::Dict new_acro = *acro;
+        SigSet(new_acro, "Fields", fo::Value(std::move(kept)));
+        if (acroform_id != 0) {
+            const auto* ao = FindObject(dump, acroform_id);
+            dirty.push_back(DirtyObject{acroform_id, ao ? ao->generation : std::uint16_t{0},
+                                        fo::Value(std::move(new_acro))});
+        } else {
+            SigSet(cat, "AcroForm", fo::Value(std::move(new_acro)));
+            cat_changed = true;
+        }
+    }
+    if (cat_changed)
+        dirty.push_back(DirtyObject{catalog->id, catalog->generation, fo::Value(std::move(cat))});
+
+    auto out = foundation::pdf_writer_incremental::AppendIncremental(
+        base_span, std::span<const DirtyObject>(dirty.data(), dirty.size()));
+    bytes_ = std::move(out);
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(
+            std::span<const std::byte>(bytes_.data(), bytes_.size())));
+    page_annotations_.clear();
+}
+
+Document::CatalogSignatureState
+Document::ReadCatalogSignatureStateInternal() const {
+    CatalogSignatureState st;
+    try {
+        auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+        const auto trailer_bundle = foundation::trailer::Parse(span);
+        const auto dump = foundation::objects::Parse(span);
+        const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+        const auto* cat =
+            catalog ? std::get_if<foundation::objects::Dict>(&catalog->value.v)
+                    : nullptr;
+        if (cat == nullptr) return st;
+        st.dss = DictGet(*cat, "DSS") != nullptr;
+        if (const auto* perms = SigResolveDict(dump, DictGet(*cat, "Perms"))) {
+            st.usage_rights =
+                DictGet(*perms, "UR3") != nullptr || DictGet(*perms, "UR") != nullptr;
+            if (const auto* sig = SigResolveDict(dump, DictGet(*perms, "DocMDP")))
+                st.docmdp_permissions = SigDocMdp(dump, *sig);
+        }
+    } catch (const std::exception&) {
+    }
+    return st;
+}
+
+void Document::RemoveUsageRightsInternal() {
+    namespace fo = foundation::objects;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto trailer_bundle = foundation::trailer::Parse(span);
+    const auto dump = fo::Parse(span);
+    const auto* catalog = FindObject(dump, trailer_bundle.root_id);
+    const auto* cat_in = catalog ? std::get_if<fo::Dict>(&catalog->value.v) : nullptr;
+    if (cat_in == nullptr) return;
+    const auto* perms = SigResolveDict(dump, DictGet(*cat_in, "Perms"));
+    if (perms == nullptr) return;
+    fo::Dict p = *perms;
+    const bool had_ur3 = SigErase(p, "UR3");
+    const bool had_ur = SigErase(p, "UR");
+    if (!had_ur3 && !had_ur) return;
+    fo::Dict cat = *cat_in;
+    SigErase(cat, "Perms");
+    if (!p.entries.empty()) SigSet(cat, "Perms", fo::Value(std::move(p)));
+    foundation::pdf_writer_incremental::DirtyObject d{catalog->id, catalog->generation,
+                                                      fo::Value(std::move(cat))};
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(&d, 1));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(
+            std::span<const std::byte>(bytes_.data(), bytes_.size())));
+    page_annotations_.clear();
 }
 
 }  // namespace Aspose::Pdf

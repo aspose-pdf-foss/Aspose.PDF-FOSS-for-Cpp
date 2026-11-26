@@ -24,6 +24,11 @@
 
 #include <aspose/pdf/forms/signature_custom_appearance.hpp>
 
+namespace Aspose::Pdf {
+class Document;
+namespace Facades { class PdfFileSignature; }
+}
+
 namespace Aspose::Pdf::Forms {
 
 class Signature {
@@ -34,9 +39,10 @@ public:
 
     // Verify(no-arg) ships per canonical; the (ValidationOptions,
     // ValidationResult) overloads drop via translations cascade.
-    // v1: signature verification is not implemented — always throws
-    // std::logic_error rather than reporting an unchecked signature as
-    // valid.
+    // For a signature read from a loaded document's signature field:
+    // verifies it (digest of the signed byte ranges and the RSA signature;
+    // trust chain and revocation are not checked). A Signature not bound
+    // to a signed document throws std::logic_error.
     bool Verify();
 
     SignatureCustomAppearance& CustomAppearance() noexcept;
@@ -84,6 +90,12 @@ private:
     bool avoid_estimating_signature_length_ = false;
     int default_signature_length_ = 8192;
     bool show_properties_ = false;
+    // Set when read from a loaded document's signature field.
+    const Aspose::Pdf::Document* document_ = nullptr;
+    std::string field_name_;
+
+    friend class Aspose::Pdf::Document;
+    friend class Aspose::Pdf::Facades::PdfFileSignature;
 };
 
 }  // namespace Aspose::Pdf::Forms

@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include <aspose/pdf/document.hpp>
+
 #include "_pending.hpp"
 
 namespace Aspose::Pdf::Forms {
@@ -12,11 +14,10 @@ Signature::Signature(const std::string& pfx,
       pfx_password_(password) {}
 
 bool Signature::Verify() {
-    // No cryptographic verification path exists yet (no PKCS#7 / X.509
-    // parsing or RSA verify), and a Signature is not bound to the signed
-    // document's bytes. Throw rather than report an unverified signature
-    // as valid.
-    PENDING("signature-verification");
+    // Only a signature read from a signed document has bytes to check; a
+    // Signature built to sign with is not bound to any.
+    if (document_ == nullptr) PENDING("signature-verification");
+    return document_->VerifySignatureInternal(field_name_).valid;
 }
 
 SignatureCustomAppearance&
