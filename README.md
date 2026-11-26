@@ -265,7 +265,8 @@ Facades editors, embedded media, and fax (CCITT) TIFF output. After `cmake --bui
 The most illustrative beyond Quick Start is `12_create_features`, a 10-page showcase exercising
 the whole creation surface and laid out as a pastel brochure — positioned text, a styled table,
 vector graphics with gradient fills, a page background, and a watermark, built onto a page from an
-empty `Document`:
+empty `Document`. Its output is checked in as [`showcase.pdf`](showcase.pdf) — open it to see the
+result without building anything:
 
 ```cpp
 #include <aspose/pdf/document.hpp>
