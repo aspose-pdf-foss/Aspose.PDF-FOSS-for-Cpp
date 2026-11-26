@@ -6,8 +6,8 @@
 
 Aspose.PDF FOSS for C++ is a free, open-source, modern C++20 library for working with PDF
 documents — opening and saving existing files, extracting text, rasterising pages to image
-formats, and building documents from scratch (text, tables, vector graphics, watermarks,
-annotations, AcroForm fields, and bookmarks). It links against nothing but the C++ standard
+formats, and building documents from scratch (text, tables, vector graphics with colour and
+gradient fills, watermarks, annotations, AcroForm fields, and bookmarks). It links against nothing but the C++ standard
 library: every primitive, including the TIFF, JPEG, and PNG codecs and the page rasteriser, is
 implemented from scratch with no dependency on any commercial PDF stack. Its public API is a
 strict subset of the commercial Aspose.PDF for .NET library — class names, method names, and
@@ -95,9 +95,14 @@ flowchart TD
   signature, not the certificate's trust chain); remove signatures and usage rights.
 - Build documents from scratch: positioned and word-wrapped text through `Text::TextBuilder`,
   `TextFragment`, and `TextParagraph` (with font lookup via `FontRepository::FindFont`), tabular
-  layout through `Table`/`Row`/`Cell` (column widths, per-cell and default borders, background
-  colours, and column-spanning cells), vector shapes through `Drawing::Graph` (`Line`, `Rectangle`,
-  `Circle`, `Ellipse`), and rotated, semi-transparent text overlays through `WatermarkArtifact`.
+  layout through `Table`/`Row`/`Cell` (column widths, coloured borders, table / row / cell
+  backgrounds, cell font, colour and alignment, and column-spanning cells), vector shapes through
+  `Drawing::Graph` (`Line`, `Rectangle` with rounded corners, `Circle`, `Ellipse`) with stroke
+  colour, width and dash patterns and flat, translucent or gradient fills
+  (`Color::PatternColorSpace` with `Drawing::GradientAxialShading` / `GradientRadialShading`),
+  boxes through `FloatingBox`, page-wide colour or gradient backgrounds through
+  `Page::Background`, a negative `ZIndex` to place a graph under the page text, and rotated,
+  semi-transparent text overlays through `WatermarkArtifact`.
 - References to the Standard-14 fonts (`/Helvetica`, `/Times-Roman`, `/Courier`, four styles
   each) without an embedded `/FontFile` paint correctly via system fonts, falling back to bundled
   Liberation substitutes (SIL OFL 1.1) so glyphs render even in fontless Linux/CI containers; text
@@ -237,8 +242,9 @@ int main() {
 Additional Examples below extends this into a from-scratch showcase
 ([`examples/12_create_features.cpp`](examples/12_create_features.cpp), one of the 16 programs
 under `examples/` — see `examples/README.md`, built via `cmake --build build` into
-`build/examples/<name>`): `Table`/`Row`/`Cell` layouts, `Drawing::Graph`
-shapes (`Line`, `Rectangle`, `Circle`, `Ellipse`), annotations and AcroForm fields with a
+`build/examples/<name>`), styled as a pastel brochure: `Table`/`Row`/`Cell` layouts with row and
+cell backgrounds, `Drawing::Graph` shapes (`Line`, `Rectangle`, `Circle`, `Ellipse`) with
+translucent and gradient fills, a gradient `Page::Background`, annotations and AcroForm fields with a
 pre-generated `/AP` appearance stream, `Form::Flatten()`-ready fields (`TextBoxField`,
 `CheckboxField`, `RadioButtonField`, `ComboBoxField`, `ListBoxField`, `ButtonField`), an outline
 (bookmark) tree, `CryptoAlgorithm`-based encryption (`RC4x40`/`RC4x128`/`AESx128`/`AESx256`) with
@@ -257,8 +263,9 @@ Facades editors, embedded media, and fax (CCITT) TIFF output. After `cmake --bui
 [`examples/README.md`](examples/README.md) for the full tour).
 
 The most illustrative beyond Quick Start is `12_create_features`, a 10-page showcase exercising
-the whole creation surface — positioned text, a table, vector graphics, and a watermark, built
-onto a page from an empty `Document`:
+the whole creation surface and laid out as a pastel brochure — positioned text, a styled table,
+vector graphics with gradient fills, a page background, and a watermark, built onto a page from an
+empty `Document`:
 
 ```cpp
 #include <aspose/pdf/document.hpp>
@@ -271,6 +278,9 @@ onto a page from an empty `Document`:
 #include <aspose/pdf/border_info.hpp>
 #include <aspose/pdf/drawing/graph.hpp>
 #include <aspose/pdf/drawing/circle.hpp>
+#include <aspose/pdf/drawing/gradient_axial_shading.hpp>
+#include <aspose/pdf/paragraphs.hpp>
+#include <aspose/pdf/artifact_collection.hpp>
 #include <aspose/pdf/watermark_artifact.hpp>
 
 namespace pdf = Aspose::Pdf;
@@ -280,6 +290,12 @@ namespace draw = Aspose::Pdf::Drawing;
 pdf::Document doc;
 pdf::Page page = doc.Pages().Add();   // Page is a lightweight handle
 page.SetPageSize(595.0, 842.0);
+
+// A gradient "colour": usable as a page background or any fill
+pdf::Color lavenderToMint;
+lavenderToMint.PatternColorSpace(std::make_shared<draw::GradientAxialShading>(
+    pdf::Color::FromArgb(238, 240, 251), pdf::Color::FromArgb(228, 244, 236)));
+page.Background(lavenderToMint);
 
 // Positioned text
 txt::TextFragment frag("Hello from Aspose.PDF FOSS for C++");
@@ -293,13 +309,19 @@ pdf::Table table;
 table.ColumnWidths("250 120 120");
 table.Border(pdf::BorderInfo(pdf::BorderSide::All, 0.5f));
 pdf::Row& header = table.Rows().Add();
+header.BackgroundColor(pdf::Color::FromArgb(201, 204, 242));
 header.Cells().Add("Item"); header.Cells().Add("Qty"); header.Cells().Add("Price");
 page.Paragraphs().Add(table);
 
 // Vector graphics — keep alive until doc.Save()
 draw::Graph g(495.0, 420.0);
 g.Left(40.0); g.Top(40.0);
-g.Shapes().push_back(std::make_unique<draw::Circle>(180.0f, 500.0f, 70.0f));
+auto circle = std::make_unique<draw::Circle>(180.0f, 500.0f, 70.0f);
+pdf::GraphInfo style;
+style.FillColor(pdf::Color::FromArgb(160, 240, 138, 126));  // translucent coral
+style.LineWidth(0.0f);                                       // no outline
+circle->GraphInfo(style);
+g.Shapes().push_back(std::move(circle));
 page.Paragraphs().Add(g);
 
 // Watermark
@@ -328,7 +350,11 @@ doc.Save("scratch.pdf");
 | `09_indexed_tiff` | 8-bpp palettised TIFF (median-cut) |
 | `10_render_text_pdf` | render a page with an embedded TrueType font |
 | `11_render_standard14` | render `/Helvetica` with no embedded font (fallback path) |
-| `12_create_features` | from-scratch 10-page showcase: text, image, tables, graphics, annotations, AcroForm fields, bookmarks |
+| `12_create_features` | from-scratch 10-page showcase in a pastel design: text, image, styled tables, gradient graphics, annotations, AcroForm fields, bookmarks |
+| `13_sign_and_verify` | sign with a PKCS#12 certificate (RSA or ECDSA) and verify the signature |
+| `14_facades_edit` | `PdfFileStamp`, `PdfContentEditor`, `PdfPageEditor`, `PdfBookmarkEditor` on one document |
+| `15_rich_media` | embed a video or audio file as a `RichMediaAnnotation` with a poster |
+| `16_fax_tiff` | render every page to a CCITT Group 4 (fax) TIFF |
 
 ### Open a Password-Protected Document
 
@@ -541,14 +567,14 @@ internal foundation primitives (codecs, the rasteriser, crypto) live separately 
 │   ├── public/                # Public-API implementation
 │   └── internal/              # Foundation primitives (codecs, renderer, crypto)
 ├── tests/                     # GoogleTest unit + smoke tests
-├── examples/                  # 12 runnable demo programs
+├── examples/                  # 16 runnable demo programs
 ├── pdfs/                      # Tiny sample PDFs for the examples
 └── CMakeLists.txt
 ```
 
 ## API Reference
 
-Aspose.PDF FOSS for C++ exposes 244 public types across 5 modules — Core API, Annotations,
+Aspose.PDF FOSS for C++ exposes 247 public types across 5 modules — Core API, Annotations,
 Drawing, Facades, and Forms — listed in the table below; curated member detail for the
 most-used entry points follows below it.
 
@@ -567,7 +593,7 @@ most-used entry points follows below it.
 | `BorderInfo` | Class with 10 methods. |
 | `Cell` | Class with 27 methods. |
 | `Cells` | Class with 9 methods. |
-| `Color` | Class with 147 methods. |
+| `Color` | Class with 149 methods. |
 | `Device` | The Device base class provides a virtual destructor, ensuring proper cleanup of derived raster‑device objects such as PngDevice or JpegDevice. |
 | `Document` | Document metadata can be read via `Document.Info()` and the accessor methods `Title()`, `Author()`, `Creator()`, `Producer()`, `Subject()`, and `Keywords()`. |
 | `DocumentDevice` | Class with 4 methods. |
@@ -747,8 +773,11 @@ most-used entry points follows below it.
 |---|---|
 | `Circle` | Class with 7 methods. |
 | `Ellipse` | Class with 9 methods. |
+| `GradientAxialShading` | A linear gradient between two colours, used as a fill through `Color::PatternColorSpace`. |
+| `GradientRadialShading` | A radial gradient between two circles, used as a fill through `Color::PatternColorSpace`. |
 | `Graph` | Class with 16 methods. |
 | `Line` | Class with 3 methods. |
+| `PatternColorSpace` | Base class of the gradient fills a `Color` can carry. |
 | `Rectangle-Aspose_Pdf_Drawing` | Class with 11 methods. |
 | `Shape` | Class with 4 methods. |
 
@@ -852,7 +881,7 @@ most-used entry points follows below it.
   - `Pages() -> PageCollection` (1-based indexer), `Info() -> DocumentInfo`, `Form() -> Forms::Form`, `Outlines()`, `EmbeddedFiles()`
   - `Save(path)`, `SetTitle(value)`
   - `Encrypt(user, owner, permissions, algorithm)` / `Decrypt(password)`, `IsEncrypted()`
-- `Page` — `SetPageSize(width, height)`, `Paragraphs()`, `Annotations()`, `Artifacts()`, `AddImage(bytes, rect)`
+- `Page` — `SetPageSize(width, height)`, `Background(color)`, `Paragraphs()`, `Annotations()`, `Artifacts()`, `AddImage(bytes, rect)`
 - `PageCollection` — `Add()`, `Insert(index)`, `Delete(pageNumber)`, `Count()`
 
 ### Text Extraction and Building
@@ -871,9 +900,11 @@ most-used entry points follows below it.
 
 ### Tables and Vector Graphics
 
-- `Table` — `Rows()`, `ColumnWidths(value)`, `Border(value)`, `DefaultCellBorder(value)`
-- `Row`/`Cell` — `Cells().Add(text)`, `Cell::ColSpan`, `BackgroundColor`, `BackgroundImage`
-- `Drawing::Graph(width, height)` — `Shapes()` holding `Line`, `Rectangle`, `Circle`, `Ellipse`
+- `Table` — `Rows()`, `ColumnWidths(value)`, `Border(value)`, `DefaultCellBorder(value)`, `BackgroundColor`, `DefaultCellTextState`, `DefaultCellPadding`
+- `Row`/`Cell` — `Cells().Add(text)`, `Cell::ColSpan`, `BackgroundColor`, `BackgroundImage`, `DefaultCellTextState` (font, size, colour), `Cell::Alignment`, `Row::VerticalAlignment`
+- `Drawing::Graph(width, height)` — `Shapes()` holding `Line`, `Rectangle` (`RoundedCornerRadius`), `Circle`, `Ellipse`, each styled by a `GraphInfo` (`Color`, `LineWidth`, `DashArray`, `FillColor`); `ZIndex(-1)` paints under the page text
+- `Color::PatternColorSpace` — `Drawing::GradientAxialShading` / `GradientRadialShading` (`StartColor`, `EndColor`, `Start`, `End`, radii) as a gradient fill; `Color::FromArgb(alpha, r, g, b)` for translucent fills
+- `FloatingBox` — `BackgroundColor`, `Border` (with `RoundedBorderRadius`), `Margin` placement
 - `WatermarkArtifact` — configured via the inherited `Artifact` surface (`SetTextAndState`, `SetImage`, `Position`, `Rotation`, `Opacity`, `IsBackground`)
 
 ### Annotations and Actions
@@ -921,7 +952,7 @@ most-used entry points follows below it.
 
 - **[Getting started guide](https://docs.aspose.org/pdf/cpp/)** — installation, walkthroughs, and feature guides for this library.
 - **[How-to guides & FAQ](https://kb.aspose.org/pdf/cpp/)** — task-focused answers for common PDF-processing questions.
-- **[Full API reference](https://reference.aspose.org/pdf/cpp/)** — the complete, browsable reference for all 244 public types (the [API Reference](#api-reference) section above covers the essentials).
+- **[Full API reference](https://reference.aspose.org/pdf/cpp/)** — the complete, browsable reference for all 247 public types (the [API Reference](#api-reference) section above covers the essentials).
 - **[Changelog](CHANGELOG.md)** — what changed in each release.
 - **[Contributing guide](CONTRIBUTING.md)** — how to propose changes and the project's coding conventions.
 - Found a bug or have a feature request? [Open an issue](https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/issues) on GitHub.
