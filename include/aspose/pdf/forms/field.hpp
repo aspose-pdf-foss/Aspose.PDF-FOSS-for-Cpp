@@ -123,6 +123,9 @@ public:
 protected:
     Field() noexcept = default;
 
+    // True when this field was read from the document's /AcroForm.
+    bool IsLoadedField() const noexcept;
+
     friend class TextBoxField;
 
 private:

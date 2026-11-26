@@ -1555,7 +1555,8 @@ void Document::Save(const std::string& outputFileName) const {
         && !page_geom_dirty_ && !outlines_dirty_ && !encrypt_requested_
         && !text_edits_dirty && !optimize_requested_ && !paragraphs_dirty
         && !images_dirty && !artifacts_dirty && !redactions_dirty
-        && pending_flatten_rules_.empty() && catalog_ops_.empty()) {
+        && pending_flatten_rules_.empty() && catalog_ops_.empty()
+        && !(form_ && !form_->independent_pages_.empty())) {
         WriteAll(outputFileName,
                  std::span<const std::byte>(bytes_.data(), bytes_.size()));
         return;
@@ -1629,6 +1630,10 @@ void Document::Save(const std::string& outputFileName) const {
 
     if (acroform_dirty) {
         working = AppendAcroFormUpdate(working);
+    }
+
+    if (form_ && !form_->independent_pages_.empty()) {
+        working = AppendIndependentFieldsUpdate(working);
     }
 
     if (!pending_flatten_rules_.empty()) {
@@ -10452,6 +10457,72 @@ std::vector<std::byte> Document::AppendAcroFormFieldsUpdate(
 
     // Emit each newly-added field as a combined field+widget object.
     for (auto* fp : new_fields) {
+        // Check box with options: a parent /Btn field and one widget per
+        // option (the field's own rectangle first), each with its own
+        // on-state name.
+        if (auto* cbo = dynamic_cast<Aspose::Pdf::Forms::CheckboxField*>(fp);
+            cbo != nullptr && !cbo->options_.empty()) {
+            const std::uint32_t field_page = field_page_id(fp);
+            std::string sel_value = cbo->Value();
+            if (sel_value == "Off") sel_value.clear();
+            if (sel_value.empty() && cbo->Checked()) sel_value = cbo->ExportValue();
+            const std::uint32_t parent_id = next_id++;
+            if (emitted != nullptr) (*emitted)[fp] = parent_id;
+            struct Kid { std::string state; Aspose::Pdf::Rectangle rect; std::uint32_t page; };
+            std::vector<Kid> kid_list{{cbo->ExportValue(), cbo->Rect(), field_page}};
+            for (const auto& o : cbo->options_) {
+                std::uint32_t pid = field_page;
+                if (o.page >= 1 && static_cast<std::size_t>(o.page) <= tree_->leaves.size())
+                    pid = tree_->leaves[static_cast<std::size_t>(o.page - 1)].id;
+                kid_list.push_back(Kid{o.name, o.rect, pid});
+            }
+            foundation::objects::Array kids;
+            for (const auto& kid : kid_list) {
+                const auto& r = kid.rect;
+                const double w = r.URX() - r.LLX(), h = r.URY() - r.LLY();
+                const bool on = !sel_value.empty() && kid.state == sel_value;
+                foundation::objects::Dict kd;
+                kd.entries.emplace_back("Type", PageNameValue("Annot"));
+                kd.entries.emplace_back("Subtype", PageNameValue("Widget"));
+                kd.entries.emplace_back("Parent", ref_v(parent_id));
+                foundation::objects::Array ra;
+                for (double dv : {r.LLX(), r.LLY(), r.URX(), r.URY()}) ra.items.push_back(real_v(dv));
+                { foundation::objects::Value v; v.v = std::move(ra);
+                  kd.entries.emplace_back("Rect", std::move(v)); }
+                if (kid.page != 0) kd.entries.emplace_back("P", ref_v(kid.page));
+                kd.entries.emplace_back("AS", PageNameValue((on ? kid.state : std::string("Off")).c_str()));
+                if (w > 0.0 && h > 0.0) {
+                    const std::uint32_t on_id = emit_ap(w, h, fa::CheckBox(w, h, true),
+                                                        fa::kCheckFontKey, fa::kCheckBaseFont);
+                    const std::uint32_t off_id = emit_ap(w, h, fa::CheckBox(w, h, false),
+                                                         fa::kCheckFontKey, fa::kCheckBaseFont);
+                    foundation::objects::Dict n;
+                    n.entries.emplace_back(kid.state, ref_v(on_id));
+                    n.entries.emplace_back("Off", ref_v(off_id));
+                    foundation::objects::Dict ap;
+                    ap.entries.emplace_back("N", dict_v(std::move(n)));
+                    kd.entries.emplace_back("AP", dict_v(std::move(ap)));
+                }
+                kd.entries.emplace_back("F", int_v(4));
+                const std::uint32_t kid_id = next_id++;
+                foundation::pdf_writer_incremental::DirtyObject ko;
+                ko.id = kid_id; ko.generation = 0; ko.value.v = std::move(kd);
+                dirty.push_back(std::move(ko));
+                kids.items.push_back(ref_v(kid_id));
+                if (kid.page != 0) page_widget_refs[kid.page].push_back(kid_id);
+            }
+            foundation::objects::Dict pd;
+            pd.entries.emplace_back("FT", PageNameValue("Btn"));
+            if (!cbo->PartialName().empty()) pd.entries.emplace_back("T", str_v(cbo->PartialName()));
+            pd.entries.emplace_back("V", PageNameValue(sel_value.empty() ? "Off" : sel_value.c_str()));
+            { foundation::objects::Value v; v.v = std::move(kids);
+              pd.entries.emplace_back("Kids", std::move(v)); }
+            foundation::pdf_writer_incremental::DirtyObject po;
+            po.id = parent_id; po.generation = 0; po.value.v = std::move(pd);
+            dirty.push_back(std::move(po));
+            fields_arr.items.push_back(ref_v(parent_id));
+            continue;
+        }
         // Radio group: a parent /Btn field with one Kid widget per option,
         // each carrying on/off appearance states. (A single combined widget
         // cannot represent the per-option buttons.)
@@ -11877,6 +11948,146 @@ int Document::ImportAnnotationObjectsInternal(
         foundation::pages_tree::Parse(std::span<const std::byte>(bytes_.data(), bytes_.size())));
     page_annotations_.clear();
     return static_cast<int>(placed.size());
+}
+
+std::vector<std::byte> Document::AppendIndependentFieldsUpdate(
+        const std::vector<std::byte>& working) const {
+    namespace fo = foundation::objects;
+    if (!form_ || form_->independent_pages_.empty() || !tree_) return working;
+    auto span = std::span<const std::byte>(working.data(), working.size());
+    foundation::trailer::Trailer tr;
+    fo::Dump dump;
+    try {
+        tr = foundation::trailer::Parse(span);
+        dump = fo::Parse(span);
+    } catch (const std::exception&) {
+        return working;
+    }
+    std::uint32_t next = tr.size;
+    for (const auto& o : dump.objects) next = std::max(next, o.id + 1);
+    auto dict_of = [&](std::uint32_t id) -> const fo::Dict* {
+        const auto* o = FindObject(dump, id);
+        return o ? std::get_if<fo::Dict>(&o->value.v) : nullptr;
+    };
+    auto ref_of = [](const fo::Value* v) -> std::uint32_t {
+        const auto* r = v ? std::get_if<fo::Ref>(&v->v) : nullptr;
+        return r ? r->id : 0;
+    };
+    auto kids_of = [&](const fo::Dict& d) {
+        std::vector<std::uint32_t> out;
+        if (const auto* kv = DictGet(d, "Kids"))
+            if (const auto* ka = std::get_if<fo::Array>(&kv->v))
+                for (const auto& k : ka->items)
+                    if (const auto* r = std::get_if<fo::Ref>(&k.v)) out.push_back(r->id);
+        return out;
+    };
+    std::map<std::uint32_t, fo::Dict> changed;  // id -> new dict
+    auto current = [&](std::uint32_t id) -> fo::Dict {
+        if (auto it = changed.find(id); it != changed.end()) return it->second;
+        const auto* d = dict_of(id);
+        return d ? *d : fo::Dict{};
+    };
+    std::vector<std::uint32_t> new_top_fields;
+    std::vector<std::pair<std::uint32_t, fo::Dict>> created;
+    std::set<std::uint32_t> done;
+
+    for (int page : form_->independent_pages_) {
+        if (page < 1 || static_cast<std::size_t>(page) > tree_->leaves.size()) continue;
+        const auto* pd = dict_of(tree_->leaves[static_cast<std::size_t>(page - 1)].id);
+        if (pd == nullptr) continue;
+        std::set<std::uint32_t> on_page;
+        for (const auto& a : PageAnnotsArray(*pd, dump).items)
+            if (const auto* r = std::get_if<fo::Ref>(&a.v)) on_page.insert(r->id);
+        for (std::uint32_t wid : on_page) {
+            const auto* wd = dict_of(wid);
+            if (wd == nullptr || DictGet(*wd, "Popup") != nullptr || DictGet(*wd, "P") == nullptr)
+                continue;
+            const std::uint32_t parent = ref_of(DictGet(*wd, "Parent"));
+            if (parent == 0 || on_page.count(parent) || done.count(parent)) continue;
+            fo::Dict field = current(parent);
+            const auto kids = kids_of(field);
+            if (kids.size() <= 1) continue;
+            // Group (non-terminal) fields and radio groups stay as they are.
+            bool group = false;
+            for (std::uint32_t k : kids)
+                if (const auto* kd = dict_of(k); kd && DictGet(*kd, "T") != nullptr) group = true;
+            const auto* ffv = DictGet(field, "Ff");
+            const auto* ff = ffv ? std::get_if<std::int64_t>(&ffv->v) : nullptr;
+            if (group || (ff != nullptr && (*ff & (1LL << 15)))) continue;
+            done.insert(parent);
+            std::vector<std::uint32_t> keep, moved;
+            for (std::uint32_t k : kids) (on_page.count(k) ? moved : keep).push_back(k);
+            if (keep.empty()) { keep.push_back(moved.back()); moved.pop_back(); }
+            if (moved.empty()) continue;
+            fo::Array keep_arr;
+            for (std::uint32_t k : keep) keep_arr.items.push_back(fo::Value(fo::Ref{k, 0}));
+            SetDictKey(field, "Kids", fo::Value(std::move(keep_arr)));
+            changed[parent] = field;
+            const std::string name = ReadStrOrName(DictGet(field, "T"));
+            const std::uint32_t grand = ref_of(DictGet(field, "Parent"));
+            for (std::size_t i = 0; i < moved.size(); ++i) {
+                fo::Dict copy = field;
+                fo::Array one;
+                one.items.push_back(fo::Value(fo::Ref{moved[i], 0}));
+                SetDictKey(copy, "Kids", fo::Value(std::move(one)));
+                if (!name.empty()) {
+                    fo::String t;
+                    t.bytes = EncodePdfString(name + std::to_string(i));
+                    t.kind = fo::StringKind::Literal;
+                    SetDictKey(copy, "T", fo::Value(std::move(t)));
+                }
+                const std::uint32_t nid = next++;
+                created.emplace_back(nid, std::move(copy));
+                fo::Dict kid = current(moved[i]);
+                SetDictKey(kid, "Parent", fo::Value(fo::Ref{nid, 0}));
+                changed[moved[i]] = kid;
+                if (grand != 0) {
+                    fo::Dict g = current(grand);
+                    fo::Array gk;
+                    if (const auto* gv = DictGet(g, "Kids"))
+                        if (const auto* ga = std::get_if<fo::Array>(&gv->v)) gk = *ga;
+                    gk.items.push_back(fo::Value(fo::Ref{nid, 0}));
+                    SetDictKey(g, "Kids", fo::Value(std::move(gk)));
+                    changed[grand] = g;
+                } else {
+                    new_top_fields.push_back(nid);
+                }
+            }
+        }
+    }
+    if (changed.empty()) return working;
+
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    for (auto& [id, d] : changed) {
+        const auto* o = FindObject(dump, id);
+        dirty.push_back({id, o ? o->generation : std::uint16_t{0}, fo::Value(std::move(d))});
+    }
+    for (auto& [id, d] : created) dirty.push_back({id, 0, fo::Value(std::move(d))});
+    if (!new_top_fields.empty()) {
+        const auto* catalog = FindObject(dump, tr.root_id);
+        const auto* cat = catalog ? std::get_if<fo::Dict>(&catalog->value.v) : nullptr;
+        std::uint32_t acro_id = 0;
+        const auto* acro = cat ? ResolveAcroForm(dump, DictGet(*cat, "AcroForm"), acro_id) : nullptr;
+        if (acro != nullptr) {
+            fo::Dict a = *acro;
+            fo::Array fields;
+            if (const auto* fv = DictGet(a, "Fields"))
+                if (const auto* fa2 = std::get_if<fo::Array>(&fv->v)) fields = *fa2;
+            for (std::uint32_t id : new_top_fields) fields.items.push_back(fo::Value(fo::Ref{id, 0}));
+            SetDictKey(a, "Fields", fo::Value(std::move(fields)));
+            if (acro_id != 0) {
+                const auto* ao = FindObject(dump, acro_id);
+                dirty.push_back({acro_id, ao ? ao->generation : std::uint16_t{0}, fo::Value(std::move(a))});
+            } else {
+                fo::Dict c = *cat;
+                SetDictKey(c, "AcroForm", fo::Value(std::move(a)));
+                dirty.push_back({catalog->id, catalog->generation, fo::Value(std::move(c))});
+            }
+        }
+    }
+    return foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+                  dirty.data(), dirty.size()));
 }
 
 void Document::AddAttachmentInternal(const std::string& path,

@@ -12,6 +12,10 @@ Field::Field(Aspose::Pdf::Document& doc)
 
 bool Field::Recalculate() { return true; }
 
+bool Field::IsLoadedField() const noexcept {
+    return owner_form_ != nullptr && owner_form_->loaded_ids_.count(this) != 0;
+}
+
 void Field::Flatten() {
     if (owner_form_ != nullptr) owner_form_->FlattenField(*this);
 }

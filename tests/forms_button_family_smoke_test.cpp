@@ -73,11 +73,14 @@ TEST(FormsButtonFamilySmoke, CheckboxFieldDefaultsAndState) {
     EXPECT_EQ(states[0], "Off");
     EXPECT_EQ(states[1], "On");
 
-    // Clone and check-box options are not implemented: they throw.
-    EXPECT_THROW(c.Clone(), std::logic_error);
-    EXPECT_THROW(c.AddOption("Off"), std::logic_error);
-    EXPECT_THROW(c.AddOption("Yes", Rectangle{0, 0, 10, 10, false}), std::logic_error);
-    EXPECT_THROW(c.AddOption("No", 1, Rectangle{0, 0, 10, 10, false}), std::logic_error);
+    // Clone gives an independent copy; options add widgets (see
+    // forms_section3_smoke_test).
+    auto* copy = static_cast<CheckboxField*>(c.Clone());
+    ASSERT_NE(copy, nullptr);
+    EXPECT_EQ(copy->ActiveState(), "On");
+    delete copy;
+    c.AddOption("Maybe");
+    EXPECT_EQ(c.AllowedStates().size(), 3u);
 }
 
 TEST(FormsButtonFamilySmoke, CheckboxValueShadowsField) {

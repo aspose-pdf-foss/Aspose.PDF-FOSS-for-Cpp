@@ -2,6 +2,7 @@
 
 #include "_pending.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace Aspose::Pdf::Forms {
@@ -21,27 +22,43 @@ CheckboxField::CheckboxField(Aspose::Pdf::Document& doc,
 }
 
 void* CheckboxField::Clone() const {
-    PENDING("checkbox-clone");
+    auto* c = new CheckboxField();
+    c->PartialName(PartialName());
+    c->Rect(Rect());
+    c->style_ = style_;
+    c->active_state_ = active_state_;
+    c->checked_ = checked_;
+    c->export_value_ = export_value_;
+    c->options_ = options_;
+    c->Field::Value(Field::Value());
+    return c;
 }
 
-void CheckboxField::AddOption(const std::string& /*optionName*/) {
-    // Check-box options (one widget per export value) are not modelled.
-    PENDING("checkbox-options");
+void CheckboxField::AddOption(const std::string& optionName) {
+    // Below the lowest widget, the same size as the field's.
+    const auto& r = Rect();
+    double lowest = r.LLY();
+    for (const auto& o : options_) lowest = std::min(lowest, o.rect.LLY());
+    const double h = r.URY() - r.LLY() > 0 ? r.URY() - r.LLY() : 20.0;
+    AddOption(optionName, 0, Aspose::Pdf::Rectangle(r.LLX(), lowest - h, r.URX(), lowest, false));
 }
 
-void CheckboxField::AddOption(const std::string& /*optionName*/,
-                               Aspose::Pdf::Rectangle /*rect*/) {
-    PENDING("checkbox-options");
+void CheckboxField::AddOption(const std::string& optionName,
+                               Aspose::Pdf::Rectangle rect) {
+    AddOption(optionName, 0, std::move(rect));
 }
 
-void CheckboxField::AddOption(const std::string& /*optionName*/,
-                               int /*page*/,
-                               Aspose::Pdf::Rectangle /*rect*/) {
-    PENDING("checkbox-options");
+void CheckboxField::AddOption(const std::string& optionName, int page,
+                               Aspose::Pdf::Rectangle rect) {
+    if (IsLoadedField()) PENDING("checkbox-options-on-loaded-field");
+    options_.push_back(Option{optionName, std::move(rect), page});
 }
 
 std::vector<std::string> CheckboxField::AllowedStates() const {
-    return {std::string("Off"), active_state_};
+    std::vector<std::string> out{std::string("Off"), active_state_};
+    for (const auto& o : options_)
+        if (std::find(out.begin(), out.end(), o.name) == out.end()) out.push_back(o.name);
+    return out;
 }
 
 Forms::BoxStyle CheckboxField::Style() const noexcept { return style_; }

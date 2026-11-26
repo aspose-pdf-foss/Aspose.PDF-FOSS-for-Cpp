@@ -793,6 +793,9 @@ private:
     // Throws std::runtime_error when it cannot be read.
     void AddAttachmentInternal(const std::string& path, const std::string& description);
     int ViewerPreferenceInternal() const;
+    // Save-time pass for Form::MakeFormAnnotationsIndependent.
+    std::vector<std::byte> AppendIndependentFieldsUpdate(
+        const std::vector<std::byte>& working) const;
     std::vector<std::byte> AppendCatalogOpsUpdate(
         const std::vector<std::byte>& working) const;
 

@@ -11,6 +11,12 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- Forms: `Form::GetFieldsInRect` (fields lying wholly inside a rectangle);
+  `Form::MakeFormAnnotationsIndependent` (at Save, a page's widgets whose field also has widgets
+  on other pages move into copies of the field, named `<name>0`, `<name>1`…; radio groups and
+  group fields are left alone); `CheckboxField::AddOption` (new check boxes: a parent field with
+  one widget per option, each with its own export value) and `CheckboxField::Clone`.
+
 - `PdfBookmarkEditor::ExportBookmarksToXML` / `ImportBookmarksWithXML` (the Aspose.PDF bookmark
   XML: nested `<Title>` with style, page destination, named destination or URI, open state) and
   `ExportBookmarksToHtml` / `ExtractBookmarksToHTML` (a nested list of `file.pdf#page=N` links).
@@ -104,8 +110,7 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   signature as valid just because it exists and covers the whole file.
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
-  `Form::MakeFormAnnotationsIndependent` / `GetFieldsInRect`;
-  `CheckboxField::AddOption` / `Clone` (no longer `noexcept`);
+  `CheckboxField::Clone` is no longer `noexcept`;
   `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;
   `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
 

@@ -227,6 +227,9 @@ private:
     friend class Aspose::Pdf::Facades::FormEditor;
 
     std::vector<Field*> fields_;
+    // Pages (1-based) whose widgets MakeFormAnnotationsIndependent splits
+    // off their multi-page fields at Save.
+    std::vector<int> independent_pages_;
     // 1-based page number a newly-added field's widget belongs on, recorded
     // by the Add(field, pageNumber) overloads. Save reads this to emit the
     // widget's /P parent-page ref and to link it into that page's /Annots so

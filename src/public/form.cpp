@@ -1,6 +1,9 @@
 #include <aspose/pdf/forms/form.hpp>
 
-#include "_pending.hpp"
+#include <algorithm>
+
+#include <aspose/pdf/page.hpp>
+
 #include <aspose/pdf/forms/radio_button_field.hpp>
 
 #include <algorithm>
@@ -179,11 +182,13 @@ void Form::RemoveFieldAppearance(Field& field, int appearanceIndex) {
     list.erase(list.begin() + static_cast<std::ptrdiff_t>(idx));
 }
 
-void Form::MakeFormAnnotationsIndependent(
-        Aspose::Pdf::Page& /*page*/) {
-    // Would detach the page's widget annotations from their fields so
-    // they survive Form.Delete().
-    PENDING("form-annotations-independent");
+void Form::MakeFormAnnotationsIndependent(Aspose::Pdf::Page& page) {
+    // Staged: at Save, the page's widgets whose field also has widgets on
+    // other pages move into copies of that field (named <name>0, <name>1…).
+    const int n = static_cast<int>(page.Number());
+    if (n >= 1 && std::find(independent_pages_.begin(), independent_pages_.end(), n) ==
+                      independent_pages_.end())
+        independent_pages_.push_back(n);
 }
 
 bool Form::HasField(const Field& field) const noexcept {
@@ -204,9 +209,17 @@ bool Form::HasField(const std::string& fieldName,
 }
 
 std::vector<Field*>
-Form::GetFieldsInRect(Aspose::Pdf::Rectangle /*rect*/) const {
-    // Needs each widget rendition's rectangle, which Form does not track.
-    PENDING("form-fields-in-rect");
+Form::GetFieldsInRect(Aspose::Pdf::Rectangle rect) const {
+    // Fields whose rectangle lies wholly inside `rect`.
+    std::vector<Field*> out;
+    for (auto* f : fields_) {
+        if (f == nullptr) continue;
+        const auto& r = f->Rect();
+        if (r.LLX() >= rect.LLX() && r.LLY() >= rect.LLY() && r.URX() <= rect.URX() &&
+            r.URY() <= rect.URY())
+            out.push_back(f);
+    }
+    return out;
 }
 
 bool Form::AutoRecalculate() const noexcept { return auto_recalculate_; }

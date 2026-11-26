@@ -30,13 +30,18 @@ public:
     CheckboxField(Aspose::Pdf::Document& doc,
                   Aspose::Pdf::Rectangle rect);
 
-    // Canonical Clone returns System.Object → void* per the
-    // System.Object translation. v1 stub returns nullptr; full
-    // deep-copy lands with the AcroForm save-through beat.
-    void* Clone() const;  // throws std::logic_error (not implemented)
+    // Canonical Clone returns System.Object -> void*: a new, unbound
+    // CheckboxField (name, rectangle, style, states, value) the caller owns
+    // (delete static_cast<CheckboxField*>(p)).
+    void* Clone() const;
 
     // ---- Mutation ----
 
+    // Add another widget (an option with its own export value) to a new
+    // check box: Save writes a parent field with one widget per option —
+    // the original first. The one-argument form places it below the
+    // lowest widget; `page` is 1-based. Throws std::logic_error for a
+    // check box loaded from a file.
     void AddOption(const std::string& optionName);
     void AddOption(const std::string& optionName,
                    Aspose::Pdf::Rectangle rect);
@@ -71,6 +76,13 @@ private:
     std::string active_state_ = "Yes";
     bool checked_ = false;
     std::string export_value_ = "Yes";
+    struct Option {
+        std::string name;
+        Aspose::Pdf::Rectangle rect{0, 0, 0, 0, false};
+        int page = 0;  // 1-based; 0 = the field's page
+    };
+    std::vector<Option> options_;
+    friend class Aspose::Pdf::Document;
 };
 
 }  // namespace Aspose::Pdf::Forms
