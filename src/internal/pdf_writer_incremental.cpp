@@ -570,6 +570,14 @@ std::vector<std::byte> AppendIncremental(
                             options.file_id_first,
                             options.file_id_second);
     }
+    if (options.info_id != 0) {
+        objects::Value ref;
+        ref.v = objects::Ref{options.info_id, 0};
+        bool replaced = false;
+        for (auto& [k, val] : trailer.entries)
+            if (k == "Info") { val = ref; replaced = true; }
+        if (!replaced) trailer.entries.emplace_back("Info", std::move(ref));
+    }
 
     // Start the output buffer with the original verbatim.
     std::vector<std::byte> out(original.begin(), original.end());

@@ -1575,12 +1575,17 @@ void Document::Save(const std::string& outputFileName) const {
     std::vector<std::byte> working(bytes_.begin(), bytes_.end());
 
     if (dirty_) {
-        if (info_id_ == 0) {
-            throw std::runtime_error(
-                "Aspose::Pdf::Document::Save: source document has "
-                "no /Info dictionary; info edits cannot be flushed "
-                "via incremental update without a /Info object to "
-                "replace");
+        // A document without /Info (e.g. one created from scratch) gets a
+        // new /Info object referenced from the new trailer.
+        std::uint32_t info_id = info_id_;
+        foundation::pdf_writer_incremental::AppendOptions info_opts;
+        if (info_id == 0) {
+            const auto wspan = std::span<const std::byte>(working.data(), working.size());
+            std::uint32_t next = foundation::trailer::Parse(wspan).size;
+            for (const auto& o : foundation::objects::Parse(wspan).objects)
+                next = std::max(next, o.id + 1);
+            info_id = next;
+            info_opts.info_id = info_id;
         }
         foundation::objects::Dict info_dict;
         info_dict.entries.reserve(info_entries_.size());
@@ -1593,13 +1598,14 @@ void Document::Save(const std::string& outputFileName) const {
             info_dict.entries.emplace_back(k, std::move(val));
         }
         foundation::pdf_writer_incremental::DirtyObject info_dirty;
-        info_dirty.id = info_id_;
+        info_dirty.id = info_id;
         info_dirty.generation = 0;
         info_dirty.value.v = std::move(info_dict);
         working = foundation::pdf_writer_incremental::AppendIncremental(
             std::span<const std::byte>(working.data(), working.size()),
             std::span<const foundation::pdf_writer_incremental::DirtyObject>(
-                &info_dirty, 1));
+                &info_dirty, 1),
+            info_opts);
     }
 
     if (metadata_dirty) {

@@ -125,6 +125,9 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Fixed
 
+- Document information set on a document without an `/Info` dictionary — created from scratch,
+  or loaded from a file that has none — is saved in a new `/Info` object referenced from the
+  trailer. Saving used to throw.
 - Adding, deleting and importing pages (`PageCollection`, `PdfFileEditor`) now works on documents
   with a nested `/Pages` tree: it is flattened first, with inherited resources, boxes and
   rotation pinned on each page. These operations used to throw for such files.

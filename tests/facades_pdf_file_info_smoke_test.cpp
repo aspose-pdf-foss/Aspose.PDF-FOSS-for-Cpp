@@ -103,12 +103,8 @@ TEST(FacadesPdfFileInfoSmoke, GenericGetSetMetaInfo) {
 TEST(FacadesPdfFileInfoSmoke, SaveNewInfoWritesUnchangedDocumentVerbatim) {
     // hello_world.pdf has no /Info dict; SaveNewInfo without
     // /Info-dict mutations falls through to Document::Save's
-    // fast-path (byte-identical copy). Mutating /Info on a doc
-    // without an existing /Info indirect is an existing Document
-    // limitation — surfacing it through SaveNewInfo here would
-    // hit the same "source document has no /Info dictionary"
-    // path. The save-without-mutation case still exercises the
-    // SaveNewInfo wire-through.
+    // fast-path (byte-identical copy). Edits on such a file are
+    // covered by info_without_info_dict_smoke_test.
     PdfFileInfo info{HelloWorldPdf()};
     const std::string out =
         (std::filesystem::temp_directory_path() /

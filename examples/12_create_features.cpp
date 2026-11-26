@@ -220,9 +220,10 @@ int main(int argc, char** argv) {
         return p;
     };
 
-    // (Document metadata via doc.Info() is intentionally omitted: a
-    //  from-scratch document has no /Info dictionary for the incremental
-    //  save to patch, so setting it would throw at Save time.)
+    // Document metadata: a from-scratch document gets a new /Info object
+    // when it is saved.
+    doc.Info().Title("Aspose.PDF FOSS for C++ - Feature Showcase");
+    doc.Info().Author("Aspose.PDF FOSS examples");
 
     // ---- Page 1 : cover --------------------------------------------------
     {

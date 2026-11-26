@@ -117,7 +117,7 @@ TEST(DocumentInfoSmoke, IsPredefinedKey) {
     EXPECT_FALSE(Aspose::Pdf::DocumentInfo::IsPredefinedKey(""));
 }
 
-TEST(DocumentInfoSmoke, SaveOnDocumentWithoutInfoThrows) {
+TEST(DocumentInfoSmoke, SaveOnDocumentWithoutInfoAddsInfo) {
     const auto src = FixtureDir() / "without_info.pdf";
     ASSERT_TRUE(std::filesystem::exists(src)) << src;
 
@@ -126,5 +126,7 @@ TEST(DocumentInfoSmoke, SaveOnDocumentWithoutInfoThrows) {
 
     const auto out = std::filesystem::temp_directory_path() /
                      "aspose_doc_info_noinfo.pdf";
-    EXPECT_THROW(doc.Save(out.string()), std::runtime_error);
+    doc.Save(out.string());  // a new /Info object is written
+    Aspose::Pdf::Document reopened(out.string());
+    EXPECT_EQ(reopened.Info().Title(), "attempted");
 }

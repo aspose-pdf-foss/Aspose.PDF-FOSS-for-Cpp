@@ -233,7 +233,7 @@ pre-generated `/AP` appearance stream, `Form::Flatten()`-ready fields (`TextBoxF
 `CheckboxField`, `RadioButtonField`, `ComboBoxField`, `ListBoxField`, `ButtonField`), an outline
 (bookmark) tree, `CryptoAlgorithm`-based encryption (`RC4x40`/`RC4x128`/`AESx128`/`AESx256`) with
 a `[Flags]` `Permissions` enum (not a DRM mechanism), a digital-signature walkthrough (see
-`tests/facades_pdf_file_signature_smoke_test.cpp`), the `/Info`-metadata gotcha for from-scratch
+`tests/facades_pdf_file_signature_smoke_test.cpp`), `/Info` metadata on from-scratch
 documents, and the by-reference lifetime rule for `Paragraphs`/`Annotations`/`Form`/`Artifacts`/
 `Outlines` — each parked in a `shared_ptr` until `Save()`.
 
@@ -351,8 +351,8 @@ int main() {
 }
 ```
 
-> The incremental-update writer patches an existing `/Info` object; a from-scratch document has
-> no `/Info` to patch, so setting metadata on one and saving throws.
+> A document without an `/Info` dictionary (one created from scratch, or a file that has none)
+> gets a new `/Info` object on save, referenced from the new trailer.
 
 ### Render Every Page to a Multi-Page TIFF
 

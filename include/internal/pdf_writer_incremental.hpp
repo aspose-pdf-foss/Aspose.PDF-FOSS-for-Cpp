@@ -54,6 +54,10 @@ struct AppendOptions {
     bool has_file_id = false;
     std::vector<std::byte> file_id_first;
     std::vector<std::byte> file_id_second;
+
+    // Non-zero: the new trailer's /Info points at this object (generation
+    // 0) — for a document that had no /Info dictionary.
+    std::uint32_t info_id = 0;
 };
 
 // Append an incremental update section to `original`. See
