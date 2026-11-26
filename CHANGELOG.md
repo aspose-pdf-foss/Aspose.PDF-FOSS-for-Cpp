@@ -11,6 +11,19 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `PdfBookmarkEditor::ExportBookmarksToXML` / `ImportBookmarksWithXML` (the Aspose.PDF bookmark
+  XML: nested `<Title>` with style, page destination, named destination or URI, open state) and
+  `ExportBookmarksToHtml` / `ExtractBookmarksToHTML` (a nested list of `file.pdf#page=N` links).
+- `PdfAnnotationEditor` import: `ImportAnnotationsFromXfdf` / `ImportAnnotationFromXfdf` (XFDF
+  per ISO 19444-1 — text, markup, shapes, ink, lines, polygons, stamps, links with URI, popups,
+  replies), `ImportAnnotationsFromFdf` (FDF, also without a cross-reference table) and
+  `ImportAnnotations` from other PDFs (page N onto page N, appearance streams and popups
+  included, form widgets skipped); the annotation-type overloads filter what is imported.
+  `ModifyAnnotations` (colour, contents, author, subject, open state of same-type annotations)
+  and `ModifyAnnotationsAuthor`.
+- `PdfFileSecurity::SetPrivilege(privilege)` without passwords: encrypts with empty user and
+  owner passwords, as Aspose.PDF does.
+
 - `PdfPageEditor::ApplyChanges` and `MovePosition` now act: the staged Rotation (multiples of
   90), Zoom, PageSize, horizontal / vertical alignment and move offset redraw each page in
   `ProcessPages` (all when empty) — content scaled, turned and placed in the new page size, the
@@ -91,15 +104,19 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
   signature as valid just because it exists and covers the whole file.
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
-  `PdfAnnotationEditor` XFDF / FDF / PDF import and `ModifyAnnotations[Author]`;
-  `PdfBookmarkEditor` XML / HTML import and export; `Form::MakeFormAnnotationsIndependent` /
-  `GetFieldsInRect`;
+  `Form::MakeFormAnnotationsIndependent` / `GetFieldsInRect`;
   `CheckboxField::AddOption` / `Clone` (no longer `noexcept`);
   `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;
   `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
 
 ### Fixed
 
+- Edits to annotations loaded from a file — contents, author (`Title`), subject, colour, a text
+  annotation's open state — are now saved; they used to be dropped because loaded annotations
+  were never rewritten. Loading reads those properties, and new annotations now write their
+  author, subject, colour and open state.
+- `Document(path)` opens an encrypted file that has no user password (decrypting it, with
+  `IsEncrypted()` true) instead of reading it as if it were not encrypted.
 - `PdfFileInfo::HasOpenPassword`, `HasEditPassword` and `PasswordType` report how an encrypted
   document was opened instead of always "no password"; `HasCollection` reads the catalog
   `/Collection` instead of always `false`.

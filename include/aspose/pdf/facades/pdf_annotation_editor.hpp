@@ -54,7 +54,13 @@ public:
     PdfAnnotationEditor() noexcept = default;
     explicit PdfAnnotationEditor(Aspose::Pdf::Document& document);
 
-    // ---- Import (v1 stubs — XFDF/FDF parsing deferred) ----
+    // ---- Import ----
+    // Annotations from an XFDF file (ISO 19444-1: page, rect, colour,
+    // author, contents, popups, quad points, ink, line, vertices, …), an FDF
+    // file, or other PDFs (page N onto page N; form widgets are skipped).
+    // The annotation types, when given, filter what is imported. The bound
+    // document is updated at once. Throws std::runtime_error for an
+    // unreadable or malformed file.
 
     void ImportAnnotationsFromXfdf(const std::string& xfdfFile);
     void ImportAnnotationsFromFdf(const std::string& fdfFile);
@@ -67,7 +73,10 @@ public:
         const std::vector<Aspose::Pdf::Annotations::AnnotationType>& annotType);
     void ImportAnnotations(const std::vector<std::string>& annotFile);
 
-    // ---- Modify (v1 stubs) ----
+    // ---- Modify (pages start..end, 1-based) ----
+    // ModifyAnnotations copies the colour, contents, author and subject
+    // (and a text annotation's Open) of `annotation` onto every annotation
+    // of the same type; ModifyAnnotationsAuthor renames an author.
 
     void ModifyAnnotations(int start, int end,
                            Aspose::Pdf::Annotations::Annotation& annotation);

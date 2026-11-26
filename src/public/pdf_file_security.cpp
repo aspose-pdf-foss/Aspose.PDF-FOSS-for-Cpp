@@ -155,11 +155,10 @@ bool PdfFileSecurity::TryDecryptFile(const std::string& ownerPassword) {
 
 // ===== Permissions ===========================================================
 
-bool PdfFileSecurity::SetPrivilege(const DocumentPrivilege&) {
-    // v1 stub — re-applying permissions while preserving the existing
-    // passwords needs the bound document's recovered credentials,
-    // which v1 does not carry. Use SetPrivilege(user, owner, priv).
-    return false;
+bool PdfFileSecurity::SetPrivilege(const DocumentPrivilege& privilege) {
+    // As in Aspose.PDF: encrypt with empty user and owner passwords, so the
+    // file opens without a password but carries the permissions.
+    return SetPrivilege(std::string(), std::string(), privilege);
 }
 
 bool PdfFileSecurity::SetPrivilege(const std::string& userPassword,

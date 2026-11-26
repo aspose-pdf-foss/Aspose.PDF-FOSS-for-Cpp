@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <memory>
 #include <vector>
 
@@ -104,6 +105,15 @@ private:
     std::vector<std::unique_ptr<Annotation>> owned_;
     std::map<const Annotation*, std::uint32_t> loaded_ids_;
     std::size_t loaded_count_ = 0;
+    // The properties of a loaded annotation as read: Save rewrites only
+    // the entries (/Contents /T /Subj /C /Open) whose value changed.
+    struct LoadedProps {
+        std::string contents, title, subject;
+        bool has_color = false;
+        double r = 0, g = 0, b = 0;
+        bool open = false;
+    };
+    std::map<const Annotation*, LoadedProps> loaded_props_;
 
     std::vector<Annotation*> items_;
     std::vector<bool> consider_rotation_;

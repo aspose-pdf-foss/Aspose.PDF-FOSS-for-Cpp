@@ -84,29 +84,15 @@ TEST(FacadesPdfAnnotationEditorSmoke, DeleteAnnotationUnknownNameNoOp) {
     EXPECT_EQ(doc.Pages()[1].Annotations().Count(), 1);
 }
 
-TEST(FacadesPdfAnnotationEditorSmoke, UnimplementedImportAndModifyThrow) {
+TEST(FacadesPdfAnnotationEditorSmoke, FlattenAndDeleteRun) {
     Document doc{HelloWorldPdf()};
     PdfAnnotationEditor editor{doc};
-
     const std::vector<AnnotationType> types{AnnotationType::Text};
-    const std::vector<std::string> files{"a.xfdf"};
-
-    // Import and modify are not implemented: they throw instead of
-    // silently doing nothing.
-    EXPECT_THROW(editor.ImportAnnotationsFromXfdf("a.xfdf"), std::logic_error);
-    EXPECT_THROW(editor.ImportAnnotationsFromFdf("a.fdf"), std::logic_error);
-    EXPECT_THROW(editor.ImportAnnotationFromXfdf("a.xfdf"), std::logic_error);
-    EXPECT_THROW(editor.ImportAnnotationFromXfdf("a.xfdf", types), std::logic_error);
-    EXPECT_THROW(editor.ImportAnnotations(files, types), std::logic_error);
-    EXPECT_THROW(editor.ImportAnnotations(files), std::logic_error);
-    EXPECT_THROW(editor.ModifyAnnotationsAuthor(1, 1, "old", "new"), std::logic_error);
-    TextAnnotation tmpl{doc};
-    EXPECT_THROW(editor.ModifyAnnotations(1, 1, tmpl), std::logic_error);
-
-    // Flatten and delete-by-subtype work.
     editor.FlatteningAnnotations();
     editor.FlatteningAnnotations(1, 1, types);
     editor.DeleteAnnotations("Text");
+    // Import of a missing file is reported.
+    EXPECT_THROW(editor.ImportAnnotationsFromXfdf("no_such.xfdf"), std::runtime_error);
 }
 
 TEST(FacadesPdfAnnotationEditorSmoke, UnboundDeleteIsSafe) {

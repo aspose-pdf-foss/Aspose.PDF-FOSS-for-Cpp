@@ -64,13 +64,22 @@ public:
     // The bookmarks under `parent` (matched by title, and by level when set).
     Bookmarks ExtractBookmarks(const Bookmark& parent);
 
-    // ---- Import / Export (not implemented: throw std::logic_error) ----
+    // ---- Import / Export (the Aspose.PDF bookmark XML and HTML formats) ----
 
-    void ExtractBookmarksToHTML(const std::string& dataDir,
-                                const std::string& outputFile);
-    void ExportBookmarksToHtml(const std::string& dataDir,
-                               const std::string& outputFile);
-    void ExportBookmarksToXML(const std::string& outputFile);
+    // Write `pdfFile`'s bookmarks as HTML next to it ("<name>-index.html");
+    // `cssFile` is not used.
+    void ExtractBookmarksToHTML(const std::string& pdfFile,
+                                const std::string& cssFile);
+    // Write `inPdfFile`'s bookmarks as a nested HTML list of links
+    // ("<file>#page=N") to `outHtmlFile`.
+    void ExportBookmarksToHtml(const std::string& inPdfFile,
+                               const std::string& outHtmlFile);
+    // Write the bound document's bookmarks as XML:
+    // <Bookmark><Title Style Page Action Open>text<Title …/></Title></Bookmark>
+    void ExportBookmarksToXML(const std::string& xmlFile);
+    // Append the bookmarks of such an XML file (GoTo page / named, URI) to
+    // the bound document; written at Save. Throws std::runtime_error on an
+    // unreadable or malformed file.
     void ImportBookmarksWithXML(const std::string& xmlFile);
 
 private:

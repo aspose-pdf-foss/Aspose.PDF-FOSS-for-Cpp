@@ -20,10 +20,9 @@
 //     TryChangePassword never rethrow — they return false and record
 //     the failure.
 //
-// v1 note: SetPrivilege(privilege) alone (no passwords) is a stub —
-// re-applying permissions while preserving the existing passwords needs
-// the bound document's recovered credentials, which v1 does not carry.
-// Use SetPrivilege(user, owner, privilege) instead.
+// SetPrivilege(privilege) alone encrypts with empty user and owner
+// passwords (as Aspose.PDF does): the file opens without a password but
+// carries the permissions.
 //
 // Phased drops:
 //   * Stream ctors / BindPdf(Stream) / InputStream / OutputStream —

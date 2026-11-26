@@ -24,6 +24,7 @@
 #include <aspose/pdf/annotations/squiggly_annotation.hpp>
 #include <aspose/pdf/annotations/stamp_annotation.hpp>
 #include <aspose/pdf/annotations/strike_out_annotation.hpp>
+#include <aspose/pdf/annotations/markup_annotation.hpp>
 #include <aspose/pdf/annotations/text_annotation.hpp>
 #include <aspose/pdf/annotations/underline_annotation.hpp>
 #include <aspose/pdf/annotations/line_annotation.hpp>
@@ -104,6 +105,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <ios>
 #include <random>
@@ -646,6 +648,12 @@ Document::Document(const std::string& filename) {
     source_filename_ = filename;
     auto bytes_view = std::span<const std::byte>(bytes_.data(), bytes_.size());
     info_id_ = foundation::xref::Parse(bytes_view).info_id;
+    // An encrypted file opens with the empty user password when it has
+    // none; a file that needs a password is left as before (unread).
+    try {
+        AuthenticateOnOpen(std::string());
+    } catch (const std::exception&) {
+    }
     tree_ = std::make_unique<foundation::pages_tree::Tree>(
         foundation::pages_tree::Parse(bytes_view));
 }
@@ -906,19 +914,10 @@ std::vector<std::byte> StringToBytes(const std::string& s) {
 
 }  // namespace
 
-Document::Document(const std::string& filename,
-                   const std::string& password) {
-    bytes_ = ReadAll(filename);
-    source_filename_ = filename;
+void Document::AuthenticateOnOpen(const std::string& password) {
     auto view = std::span<const std::byte>(bytes_.data(), bytes_.size());
-
-    // Trailer parsing is performed against the slice past every
-    // earlier `%%EOF` so the foundation::trailer::Parse
-    // sees only the LAST startxref — see LastTrailerSlice's doc
-    // comment for the underlying defect.
     const auto trailer_view = LastTrailerSlice(view);
     const auto trailer_info = foundation::trailer::Parse(trailer_view);
-    info_id_ = trailer_info.info_id;
 
     if (trailer_info.encrypt_id != 0) {
         // Resolve /Encrypt dict via objects::Parse and authenticate
@@ -965,6 +964,20 @@ Document::Document(const std::string& filename,
             }
         }
     }
+}
+
+Document::Document(const std::string& filename,
+                   const std::string& password) {
+    bytes_ = ReadAll(filename);
+    source_filename_ = filename;
+    auto view = std::span<const std::byte>(bytes_.data(), bytes_.size());
+
+    // Trailer parsing is performed against the slice past every
+    // earlier `%%EOF` so the foundation::trailer::Parse
+    // sees only the LAST startxref — see LastTrailerSlice's doc
+    // comment for the underlying defect.
+    info_id_ = foundation::trailer::Parse(LastTrailerSlice(view)).info_id;
+    AuthenticateOnOpen(password);
 
     tree_ = std::make_unique<foundation::pages_tree::Tree>(
         foundation::pages_tree::Parse(view));
@@ -2165,6 +2178,11 @@ Aspose::Pdf::Forms::Form& Document::Form() {
 
 namespace {
 
+// Defined further down (same unnamed namespace).
+void SetDictKey(foundation::objects::Dict& d, const char* key,
+                foundation::objects::Value v);
+void EraseDictKey(foundation::objects::Dict& d, const char* key);
+
 // Map an AnnotationType enum to the PDF /Subtype name per
 // ISO 32000-1 §12.5.6. Returns nullptr for types whose canonical
 // /Subtype is not in scope for v1 baseline write-through (the
@@ -2398,6 +2416,59 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
         }
         const bool removed_loaded =
             present_loaded.size() < slot->loaded_count_;
+
+        // Loaded annotations whose properties changed: rewrite just those
+        // entries of the original dictionary.
+        for (int i = 0; i < slot->Count(); ++i) {
+            namespace AN = Aspose::Pdf::Annotations;
+            const AN::Annotation* ptr = &(*slot)[i];
+            auto id_it = slot->loaded_ids_.find(ptr);
+            auto pr_it = slot->loaded_props_.find(ptr);
+            if (id_it == slot->loaded_ids_.end() || pr_it == slot->loaded_props_.end()) continue;
+            const auto& was = pr_it->second;
+            const auto* m = dynamic_cast<const AN::MarkupAnnotation*>(ptr);
+            const auto* tx = dynamic_cast<const AN::TextAnnotation*>(ptr);
+            const Aspose::Pdf::Color c = ptr->Color();
+            const bool has_c = c.A() > 0.0;
+            const bool color_changed =
+                has_c != was.has_color ||
+                (has_c && (c.r_ != was.r || c.g_ != was.g || c.b_ != was.b));
+            const bool changed = ptr->Contents() != was.contents ||
+                                 (m && (m->Title() != was.title || m->Subject() != was.subject)) ||
+                                 (tx && tx->Open() != was.open) || color_changed;
+            if (!changed) continue;
+            const auto* aobj = FindObject(dump, id_it->second);
+            const auto* adict = aobj ? std::get_if<foundation::objects::Dict>(&aobj->value.v) : nullptr;
+            if (adict == nullptr) continue;
+            foundation::objects::Dict upd = *adict;
+            auto set_str = [&](const char* key, const std::string& value) {
+                if (value.empty()) { EraseDictKey(upd, key); return; }
+                foundation::objects::String s;
+                s.bytes = EncodePdfString(value);
+                s.kind = foundation::objects::StringKind::Literal;
+                SetDictKey(upd, key, foundation::objects::Value(std::move(s)));
+            };
+            set_str("Contents", ptr->Contents());
+            if (m) {
+                set_str("T", m->Title());
+                set_str("Subj", m->Subject());
+            }
+            if (tx) SetDictKey(upd, "Open", foundation::objects::Value(tx->Open()));
+            if (color_changed) {
+                if (has_c) {
+                    foundation::objects::Array ca;
+                    for (double v : {c.r_, c.g_, c.b_}) ca.items.push_back(foundation::objects::Value(v));
+                    SetDictKey(upd, "C", foundation::objects::Value(std::move(ca)));
+                } else {
+                    EraseDictKey(upd, "C");
+                }
+            }
+            foundation::pdf_writer_incremental::DirtyObject d;
+            d.id = id_it->second;
+            d.generation = aobj->generation;
+            d.value.v = std::move(upd);
+            dirty.push_back(std::move(d));
+        }
 
         // Page unchanged — leave its /Annots untouched.
         if (new_annots.empty() && !removed_loaded) continue;
@@ -2729,6 +2800,24 @@ std::vector<std::byte> Document::AppendAnnotationsUpdate(
                         has_ap = false;  // Text(sticky)/Link/FileAttachment
                         break;
                 }
+                if (!has_ap && has_c)
+                    set_arr("C", color_arr(ac.r_, ac.g_, ac.b_));
+                if (const auto* m = dynamic_cast<const AN::MarkupAnnotation*>(ptr)) {
+                    if (!m->Title().empty()) {
+                        foundation::objects::String s;
+                        s.bytes = EncodePdfString(m->Title());
+                        s.kind = foundation::objects::StringKind::Literal;
+                        annot_dict->entries.emplace_back("T", foundation::objects::Value(std::move(s)));
+                    }
+                    if (!m->Subject().empty()) {
+                        foundation::objects::String s;
+                        s.bytes = EncodePdfString(m->Subject());
+                        s.kind = foundation::objects::StringKind::Literal;
+                        annot_dict->entries.emplace_back("Subj", foundation::objects::Value(std::move(s)));
+                    }
+                }
+                if (const auto* tx = dynamic_cast<const AN::TextAnnotation*>(ptr); tx && tx->Open())
+                    annot_dict->entries.emplace_back("Open", foundation::objects::Value(true));
                 if (has_ap) {
                     set_arr("C", color_arr(cr, cg, cb));
                     const std::uint32_t apid = emit_annot_ap(
@@ -8331,6 +8420,35 @@ void Document::LoadPageAnnotations(
 
         A::Annotation* raw = annot.get();
         if (!contents.empty()) raw->Contents(contents);
+        Aspose::Pdf::Annotations::AnnotationCollection::LoadedProps props;
+        props.contents = raw->Contents();
+        if (auto* m = dynamic_cast<A::MarkupAnnotation*>(raw)) {
+            m->Title(ReadStrOrName(DictGet(*adict, "T")));
+            m->Subject(ReadStrOrName(DictGet(*adict, "Subj")));
+            props.title = m->Title();
+            props.subject = m->Subject();
+        }
+        if (const auto* cv = DictGet(*adict, "C"))
+            if (const auto* ca = std::get_if<foundation::objects::Array>(&cv->v);
+                ca && ca->items.size() == 3) {
+                auto comp = [](const foundation::objects::Value& v) {
+                    if (const auto* d = std::get_if<double>(&v.v)) return *d;
+                    if (const auto* i = std::get_if<std::int64_t>(&v.v)) return static_cast<double>(*i);
+                    return 0.0;
+                };
+                props.has_color = true;
+                props.r = comp(ca->items[0]);
+                props.g = comp(ca->items[1]);
+                props.b = comp(ca->items[2]);
+                raw->Color(Aspose::Pdf::Color::FromRgb(props.r, props.g, props.b));
+            }
+        if (auto* t = dynamic_cast<A::TextAnnotation*>(raw)) {
+            const auto* ov = DictGet(*adict, "Open");
+            const auto* ob = ov ? std::get_if<bool>(&ov->v) : nullptr;
+            t->Open(ob != nullptr && *ob);
+            props.open = t->Open();
+        }
+        coll.loaded_props_[raw] = props;
         coll.loaded_ids_[raw] = ref->id;
         coll.owned_.push_back(std::move(annot));
         coll.Add(*raw);
@@ -11617,6 +11735,149 @@ std::string StampHeader(const StampBlock& b) {
 }
 
 }  // namespace
+
+std::vector<Document::OutlineNode> Document::OutlineTreeInternal() {
+    std::vector<OutlineNode> out;
+    if (outlines_collection_) {
+        for (int i = 1; i <= outlines_collection_->Count(); ++i)
+            out.push_back(OutlineNodeFromItem((*outlines_collection_)[i]));
+    } else if (outlines_dirty_) {
+        out = staged_outlines_;
+    } else {
+        OutlineCollection loaded;
+        LoadOutlines(loaded);
+        for (int i = 1; i <= loaded.Count(); ++i)
+            out.push_back(OutlineNodeFromItem(loaded[i]));
+    }
+    return out;
+}
+
+void Document::AppendOutlinesInternal(std::vector<OutlineNode> nodes) {
+    auto all = OutlineTreeInternal();
+    for (auto& n : nodes) all.push_back(std::move(n));
+    SetStagedOutlines(std::move(all));
+}
+
+int Document::ImportAnnotationObjectsInternal(
+        const foundation::objects::Dump& src,
+        const std::vector<std::pair<int, std::uint32_t>>& annots,
+        const std::map<std::uint32_t, int>& src_pages) {
+    namespace fo = foundation::objects;
+    if (!tree_ || annots.empty()) return 0;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const auto trailer_bundle = foundation::trailer::Parse(span);
+    const fo::Dump dump = fo::Parse(span);
+    std::uint32_t next = trailer_bundle.size;
+    for (const auto& o : dump.objects) next = std::max(next, o.id + 1);
+
+    auto structural = [&](std::uint32_t id) {
+        const auto* o = FindObject(src, id);
+        const auto* d = o ? std::get_if<fo::Dict>(&o->value.v) : nullptr;
+        if (d == nullptr) return false;
+        const auto* t = DictGet(*d, "Type");
+        const auto* n = t ? std::get_if<std::string>(&t->v) : nullptr;
+        return n != nullptr && (*n == "Page" || *n == "Pages" || *n == "Catalog" || *n == "FDF");
+    };
+
+    // The reachable graph, stopping at pages and the page tree.
+    std::vector<std::uint32_t> order;
+    std::set<std::uint32_t> seen;
+    auto add = [&](std::uint32_t id) {
+        if (FindObject(src, id) != nullptr && seen.insert(id).second) order.push_back(id);
+    };
+    std::set<std::uint32_t> annot_ids;
+    for (const auto& [page, id] : annots) {
+        if (page < 1 || static_cast<std::size_t>(page) > tree_->leaves.size()) continue;
+        annot_ids.insert(id);
+        add(id);
+    }
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        const auto* o = FindObject(src, order[i]);
+        std::vector<std::uint32_t> refs;
+        if (const auto* d = std::get_if<fo::Dict>(&o->value.v)) {
+            for (const auto& kv : d->entries)
+                if (kv.first != "P") CollectRefs(kv.second, refs);
+        } else {
+            CollectRefs(o->value, refs);
+        }
+        for (std::uint32_t r : refs)
+            if (!src_pages.count(r) && !structural(r)) add(r);
+    }
+    if (order.empty()) return 0;
+
+    std::map<std::uint32_t, std::uint32_t> remap;
+    for (std::uint32_t id : order) remap[id] = next++;
+    auto page_ref = [&](int page) {
+        return fo::Ref{tree_->leaves[static_cast<std::size_t>(page - 1)].id, 0};
+    };
+    std::function<fo::Value(const fo::Value&)> map_value = [&](const fo::Value& in) -> fo::Value {
+        if (const auto* r = std::get_if<fo::Ref>(&in.v)) {
+            if (auto it = remap.find(r->id); it != remap.end()) return fo::Value(fo::Ref{it->second, 0});
+            if (auto it = src_pages.find(r->id); it != src_pages.end() && it->second >= 1 &&
+                static_cast<std::size_t>(it->second) <= tree_->leaves.size())
+                return fo::Value(page_ref(it->second));
+            return fo::Value();  // null
+        }
+        if (const auto* a = std::get_if<fo::Array>(&in.v)) {
+            fo::Array out;
+            for (const auto& it : a->items) out.items.push_back(map_value(it));
+            return fo::Value(std::move(out));
+        }
+        if (const auto* d = std::get_if<fo::Dict>(&in.v)) {
+            fo::Dict out;
+            for (const auto& kv : d->entries) out.entries.emplace_back(kv.first, map_value(kv.second));
+            return fo::Value(std::move(out));
+        }
+        if (const auto* s = std::get_if<fo::Stream>(&in.v)) {
+            fo::Stream out;
+            for (const auto& kv : s->header.entries)
+                out.header.entries.emplace_back(kv.first, map_value(kv.second));
+            out.body = s->body;
+            return fo::Value(std::move(out));
+        }
+        return in;
+    };
+
+    std::map<std::uint32_t, int> target_page_of;
+    for (const auto& [page, id] : annots)
+        if (annot_ids.count(id) && !target_page_of.count(id)) target_page_of[id] = page;
+
+    std::vector<foundation::pdf_writer_incremental::DirtyObject> dirty;
+    for (std::uint32_t id : order) {
+        fo::Value v = map_value(FindObject(src, id)->value);
+        if (auto it = target_page_of.find(id); it != target_page_of.end())
+            if (auto* d = std::get_if<fo::Dict>(&v.v)) {
+                EraseDictKey(*d, "Page");  // FDF
+                SetDictKey(*d, "P", fo::Value(page_ref(it->second)));
+            }
+        dirty.push_back(foundation::pdf_writer_incremental::DirtyObject{remap[id], 0, std::move(v)});
+    }
+
+    // Append to each target page's /Annots, in the given order.
+    std::map<int, std::vector<std::uint32_t>> per_page;
+    std::set<std::uint32_t> placed;
+    for (const auto& [page, id] : annots)
+        if (annot_ids.count(id) && placed.insert(id).second) per_page[page].push_back(remap[id]);
+    for (const auto& [page, ids] : per_page) {
+        const auto& leaf = tree_->leaves[static_cast<std::size_t>(page - 1)];
+        const auto* po = FindObject(dump, leaf.id);
+        const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+        if (pd == nullptr) continue;
+        fo::Array arr = PageAnnotsArray(*pd, dump);
+        for (std::uint32_t nid : ids) arr.items.push_back(fo::Value(fo::Ref{nid, 0}));
+        fo::Dict updated = *pd;
+        SetDictKey(updated, "Annots", fo::Value(std::move(arr)));
+        dirty.push_back(foundation::pdf_writer_incremental::DirtyObject{
+            leaf.id, po->generation, fo::Value(std::move(updated))});
+    }
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(
+                  dirty.data(), dirty.size()));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(std::span<const std::byte>(bytes_.data(), bytes_.size())));
+    page_annotations_.clear();
+    return static_cast<int>(placed.size());
+}
 
 void Document::AddAttachmentInternal(const std::string& path,
                                      const std::string& description) {

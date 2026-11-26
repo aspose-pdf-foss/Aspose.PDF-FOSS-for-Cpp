@@ -111,9 +111,9 @@ TEST(FacadesPdfFileSecuritySmoke, SetPrivilegeWithPasswords) {
     EXPECT_TRUE(re.IsEncrypted());
 }
 
-TEST(FacadesPdfFileSecuritySmoke, SetPrivilegeNoPasswordIsStub) {
-    PdfFileSecurity sec{HelloWorldPdf(), TempPath("setpriv_stub")};
-    EXPECT_FALSE(sec.SetPrivilege(DocumentPrivilege::ForbidAll()));
+TEST(FacadesPdfFileSecuritySmoke, SetPrivilegeNoPasswordEncrypts) {
+    PdfFileSecurity sec{HelloWorldPdf(), TempPath("setpriv_nopw")};
+    EXPECT_TRUE(sec.SetPrivilege(DocumentPrivilege::ForbidAll()));
 }
 
 TEST(FacadesPdfFileSecuritySmoke, ExceptionPolicy) {

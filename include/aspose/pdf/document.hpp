@@ -31,6 +31,7 @@
 #include <aspose/pdf/rectangle.hpp>
 
 namespace foundation::pages_tree { struct Tree; }
+namespace foundation::objects { struct Dump; }
 
 namespace Aspose::Pdf {
 namespace Text { class TextAbsorber; }
@@ -769,6 +770,22 @@ private:
     // Drop /Perms /UR3 and /UR (usage rights) from the catalog.
     void RemoveUsageRightsInternal();
 
+    // The document's outline tree as Save would write it (the public
+    // Outlines() tree when accessed, else staged edits, else the file's).
+    std::vector<OutlineNode> OutlineTreeInternal();
+    // Append top-level outline items (staged for Save).
+    void AppendOutlinesInternal(std::vector<OutlineNode> nodes);
+
+    // Copy annotation objects (and what they reference) from `src` onto
+    // this document's pages, via an incremental update. `annots`: (1-based
+    // target page, source object id). `src_pages`: source page object id
+    // -> 1-based target page; references to other pages, the page tree or
+    // the catalog become null. Returns the number of annotations added.
+    int ImportAnnotationObjectsInternal(
+        const foundation::objects::Dump& src,
+        const std::vector<std::pair<int, std::uint32_t>>& annots,
+        const std::map<std::uint32_t, int>& src_pages);
+
     // Stage a catalog edit for Save; the ViewerPreference flags of the
     // catalog with the staged edits applied.
     void StageCatalogOpInternal(CatalogOp op);
@@ -906,6 +923,9 @@ private:
     // How an encrypted document was opened: with the owner password, and
     // whether it has a non-empty user (open) password at all.
     std::vector<CatalogOp> catalog_ops_;
+    // Authenticate `password` against the file's /Encrypt (no-op when not
+    // encrypted); throws std::runtime_error on a wrong password.
+    void AuthenticateOnOpen(const std::string& password);
     bool opened_as_owner_ = false;
     bool has_user_password_ = false;
     std::vector<std::byte> file_key_;
