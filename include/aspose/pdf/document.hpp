@@ -74,6 +74,7 @@ namespace Facades { class PdfBookmarkEditor; }
 namespace Facades { class PdfFileStamp; }
 namespace Facades { class PdfFileSignature; }
 namespace Facades { class PdfFileInfo; }
+namespace Facades { class PdfPageEditor; }
 namespace Facades { class PdfContentEditor; }
 namespace Facades { class PdfExtractor; }
 namespace Facades { class PdfAnnotationEditor; }
@@ -411,6 +412,7 @@ private:
     friend class Aspose::Pdf::Facades::PdfFileStamp;
     friend class Aspose::Pdf::Facades::PdfFileSignature;
     friend class Aspose::Pdf::Facades::PdfFileInfo;
+    friend class Aspose::Pdf::Facades::PdfPageEditor;
     friend class Aspose::Pdf::Facades::PdfContentEditor;
     friend class Aspose::Pdf::Facades::PdfExtractor;
     friend class Aspose::Pdf::Facades::PdfAnnotationEditor;
@@ -707,6 +709,12 @@ private:
         double new_height, const std::array<double, 4>* clip = nullptr);
     // Width and height of page `page` as displayed (/Rotate applied).
     std::array<double, 2> PageDisplaySizeInternal(int page) const;
+    // Set page `page`'s presentation entries: a /Trans transition of
+    // PdfPageEditor type 1..16 (0 = leave) lasting `transition_duration`
+    // seconds (< 0 = the default 1), and /Dur `display_duration` seconds
+    // (< 0 = leave).
+    void SetPageTransitionInternal(int page, int transition_type,
+                                   int transition_duration, int display_duration);
 
     // ---- Document outline (/Outlines) — backs PdfBookmarkEditor ----
     // Stage the full outline tree for the next Save (replaces any

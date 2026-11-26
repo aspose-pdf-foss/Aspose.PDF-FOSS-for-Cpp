@@ -12051,6 +12051,52 @@ void Document::ComposePagesInternal(const std::vector<ComposedPage>& pages) {
             std::span<const std::byte>(bytes_.data(), bytes_.size())));
 }
 
+void Document::SetPageTransitionInternal(int page, int transition_type,
+                                         int transition_duration,
+                                         int display_duration) {
+    namespace fo = foundation::objects;
+    if (!tree_ || page < 1 || static_cast<std::size_t>(page) > tree_->leaves.size()) return;
+    if (transition_type == 0 && display_duration < 0) return;
+    auto span = std::span<const std::byte>(bytes_.data(), bytes_.size());
+    const fo::Dump dump = fo::Parse(span);
+    const auto& leaf = tree_->leaves[static_cast<std::size_t>(page - 1)];
+    const auto* po = FindObject(dump, leaf.id);
+    const auto* pd = po ? std::get_if<fo::Dict>(&po->value.v) : nullptr;
+    if (pd == nullptr) return;
+    auto name = [](const char* n) { fo::Value v; v.v = std::string(n); return v; };
+    auto num = [](double x) { fo::Value v; v.v = x; return v; };
+    fo::Dict updated = *pd;
+    if (transition_type >= 1 && transition_type <= 16) {
+        // PdfPageEditor constants -> (/S, /Dm, /M, /Di), PDF 32000 12.4.4.1.
+        struct T { const char* s; const char* dm; const char* m; int di; };
+        static const T kTable[16] = {
+            {"Split", "V", "O", -1}, {"Split", "H", "O", -1}, {"Split", "V", "I", -1},
+            {"Split", "H", "I", -1}, {"Blinds", "V", nullptr, -1}, {"Blinds", "H", nullptr, -1},
+            {"Box", nullptr, "I", -1}, {"Box", nullptr, "O", -1}, {"Wipe", nullptr, nullptr, 0},
+            {"Wipe", nullptr, nullptr, 180}, {"Wipe", nullptr, nullptr, 90},
+            {"Wipe", nullptr, nullptr, 270}, {"Dissolve", nullptr, nullptr, -1},
+            {"Glitter", nullptr, nullptr, 0}, {"Glitter", nullptr, nullptr, 270},
+            {"Glitter", nullptr, nullptr, 315}};
+        const T& t = kTable[transition_type - 1];
+        fo::Dict trans;
+        trans.entries.emplace_back("Type", name("Trans"));
+        trans.entries.emplace_back("D", num(transition_duration < 0 ? 1.0 : transition_duration));
+        trans.entries.emplace_back("S", name(t.s));
+        if (t.dm) trans.entries.emplace_back("Dm", name(t.dm));
+        if (t.m) trans.entries.emplace_back("M", name(t.m));
+        if (t.di >= 0) trans.entries.emplace_back("Di", num(t.di));
+        fo::Value v; v.v = std::move(trans);
+        SetDictKey(updated, "Trans", std::move(v));
+    }
+    if (display_duration >= 0) SetDictKey(updated, "Dur", num(display_duration));
+    foundation::pdf_writer_incremental::DirtyObject d;
+    d.id = leaf.id; d.generation = po->generation; d.value.v = std::move(updated);
+    bytes_ = foundation::pdf_writer_incremental::AppendIncremental(
+        span, std::span<const foundation::pdf_writer_incremental::DirtyObject>(&d, 1));
+    tree_ = std::make_unique<foundation::pages_tree::Tree>(
+        foundation::pages_tree::Parse(std::span<const std::byte>(bytes_.data(), bytes_.size())));
+}
+
 void Document::TransformPageContentInternal(
         int page, const std::array<double, 6>& cm, double new_width,
         double new_height, const std::array<double, 4>* clip) {

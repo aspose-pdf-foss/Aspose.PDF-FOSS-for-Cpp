@@ -5,10 +5,14 @@
 // zoom / align pages + page transitions). Mirrors canonical
 // Aspose.Pdf.Facades.PdfPageEditor; extends SaveableFacade.
 //
-// v1: GetPages / GetPageSize / GetPageRotation read the real page tree;
-// the transform operations (MovePosition / Rotation / Zoom / alignment /
-// transitions) are staged into properties but ApplyChanges is a stub —
-// the page content-transform wiring is deferred.
+// The properties (Rotation, Zoom, PageSize, alignment, MovePosition,
+// transitions, ProcessPages) are staged; ApplyChanges applies them to the
+// bound document: each processed page's content is redrawn rotated by
+// Rotation, scaled by Zoom, aligned in the new page size (PageSize, or the
+// rotated page's own size) and moved by MovePosition; its media box becomes
+// that size and its annotations move with the content. The transition and
+// display duration go into the page's /Trans and /Dur. The page's /Rotate
+// is kept.
 //
 // Phased drops:
 //   * GetPageBoxSize (System.Drawing.Rectangle return) — Drawing.Rectangle
@@ -62,6 +66,7 @@ public:
     PdfPageEditor() noexcept = default;
     explicit PdfPageEditor(Aspose::Pdf::Document& document);
 
+    // Shift the page content by (offsetX, offsetY) at ApplyChanges.
     void MovePosition(float offsetX, float offsetY);
     // Number of pages in the bound document (real).
     int GetPages();
@@ -69,6 +74,8 @@ public:
     // Unbound → 0 x 0 / 0; out-of-range page → throws std::out_of_range.
     Aspose::Pdf::PageSize GetPageSize(int pageId);
     int GetPageRotation(int pageId);
+    // Apply the staged changes to ProcessPages (empty = every page).
+    // Throws std::invalid_argument when Rotation is not a multiple of 90.
     void ApplyChanges();
 
     int TransitionDuration() const noexcept;
@@ -112,6 +119,15 @@ private:
         Aspose::Pdf::Facades::VerticalAlignmentType::Top();
     Aspose::Pdf::VerticalAlignment vertical_alignment_type_ =
         Aspose::Pdf::VerticalAlignment::None;
+    // What was explicitly set (unset values leave the page as it is).
+    bool page_size_set_ = false;
+    bool vertical_alignment_set_ = false;
+    bool move_set_ = false;
+    float move_x_ = 0.0f;
+    float move_y_ = 0.0f;
+    bool transition_type_set_ = false;
+    bool transition_duration_set_ = false;
+    bool display_duration_set_ = false;
 };
 
 }  // namespace Aspose::Pdf::Facades

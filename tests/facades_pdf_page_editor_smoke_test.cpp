@@ -64,9 +64,9 @@ TEST(FacadesPdfPageEditorSmoke, GeometryOfLetterPage) {
     EXPECT_FLOAT_EQ(sz.Width(), 612.0f);
     EXPECT_FLOAT_EQ(sz.Height(), 792.0f);
     EXPECT_EQ(editor.GetPageRotation(1), 0);
-    // Not implemented yet: throw rather than silently ignore.
-    EXPECT_THROW(editor.MovePosition(10, 20), std::logic_error);
-    EXPECT_THROW(editor.ApplyChanges(), std::logic_error);
+    // Nothing staged: ApplyChanges leaves the page as it is.
+    editor.ApplyChanges();
+    EXPECT_FLOAT_EQ(editor.GetPageSize(1).Width(), 612.0f);
 }
 
 TEST(FacadesPdfPageEditorSmoke, UnboundGetPagesZero) {

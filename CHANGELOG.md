@@ -11,6 +11,12 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ### Added
 
+- `PdfPageEditor::ApplyChanges` and `MovePosition` now act: the staged Rotation (multiples of
+  90), Zoom, PageSize, horizontal / vertical alignment and move offset redraw each page in
+  `ProcessPages` (all when empty) — content scaled, turned and placed in the new page size, the
+  media box resized, annotations moved along — and `TransitionType` / `TransitionDuration` /
+  `DisplayDuration` set the page's `/Trans` and `/Dur`. Unset properties leave the page as it is.
+
 - `PdfContentEditor` editors that used to do nothing: `AddDocumentAttachment` /
   `DeleteAttachments`; `AddDocumentAdditionalAction` (JavaScript on document open — the
   `/OpenAction` — close, save and print events) and `RemoveDocumentOpenAction`;
@@ -86,8 +92,8 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 - Methods that used to do nothing or return an empty value now throw `std::logic_error`
   ("not implemented — blocked on capability '…'") so a missing feature is visible:
   `PdfAnnotationEditor` XFDF / FDF / PDF import and `ModifyAnnotations[Author]`;
-  `PdfBookmarkEditor` XML / HTML import and export; `PdfPageEditor::MovePosition` /
-  `ApplyChanges`; `Form::MakeFormAnnotationsIndependent` / `GetFieldsInRect`;
+  `PdfBookmarkEditor` XML / HTML import and export; `Form::MakeFormAnnotationsIndependent` /
+  `GetFieldsInRect`;
   `CheckboxField::AddOption` / `Clone` (no longer `noexcept`);
   `TextMarkupAnnotation::GetMarkedText`; `PrinterMarkAnnotation::AddPrinterMarks`;
   `RichMediaAnnotation::Update`. `grep PENDING src` lists them.
