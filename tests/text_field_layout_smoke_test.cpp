@@ -151,16 +151,21 @@ void WriteForm(const std::string& path, const std::string& da, int ff,
 }
 
 // The font resource `key` of the normal appearance of field "name".
-const fo::Value* ApFont(const Parsed& p, const std::string& key) {
+// The object id the appearance's font resource `key` refers to; 0 when it
+// is absent or not a reference. Returned by value: the dictionaries walked
+// here are local copies.
+std::uint32_t ApFontRefId(const Parsed& p, const std::string& key) {
     for (const auto& d : AnnotDicts(p)) {
         if (NameOf(Get(d, "Subtype")) != "Widget") continue;
         const fo::Dict ap = ResolveDict(p.dump, Get(d, "AP"));
         const fo::Dict n = ResolveDict(p.dump, Get(ap, "N"));
         const fo::Dict res = ResolveDict(p.dump, Get(n, "Resources"));
         const fo::Dict fonts = ResolveDict(p.dump, Get(res, "Font"));
-        return Get(fonts, key);
+        const fo::Value* v = Get(fonts, key);
+        const auto* r = v ? std::get_if<fo::Ref>(&v->v) : nullptr;
+        return r ? r->id : 0;
     }
-    return nullptr;
+    return 0;
 }
 
 int ColorPixels(const foundation::png_decoder::DecodedImage& img, bool red) {
@@ -183,11 +188,7 @@ TEST(TextFieldLayout, LoadedFieldUsesItsDaColorAndDrFont) {
         re.Save(out);
     }
     const Parsed p = ParsePage(ReadFile(out), 0);
-    const fo::Value* font = ApFont(p, "Helv");
-    ASSERT_NE(font, nullptr);
-    const auto* ref = std::get_if<fo::Ref>(&font->v);
-    ASSERT_NE(ref, nullptr);
-    EXPECT_EQ(ref->id, 6u);  // the /DR font object itself
+    EXPECT_EQ(ApFontRefId(p, "Helv"), 6u);  // the /DR font object itself
     Document re{out};
     EXPECT_GT(ColorPixels(Render(re, 1), true), 10);
     std::filesystem::remove(src);
@@ -205,10 +206,7 @@ TEST(TextFieldLayout, LoadedFieldUsesDrFontWithWidths) {
     }
     const std::string bytes = ReadFile(out);
     EXPECT_TRUE(Has(bytes, "/F1 10 Tf"));
-    const fo::Value* font = ApFont(ParsePage(bytes, 0), "F1");
-    ASSERT_NE(font, nullptr);
-    ASSERT_NE(std::get_if<fo::Ref>(&font->v), nullptr);
-    EXPECT_EQ(std::get_if<fo::Ref>(&font->v)->id, 7u);
+    EXPECT_EQ(ApFontRefId(ParsePage(bytes, 0), "F1"), 7u);
     Document re{out};
     EXPECT_GT(ColorPixels(Render(re, 1), false), 10);
     std::filesystem::remove(src);
