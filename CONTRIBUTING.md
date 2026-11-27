@@ -134,15 +134,47 @@ To enable it:
 1. On nuget.org, open your user name → **Trusted Publishing** and add a
    policy for the owner of the `Aspose.PDF.Cpp.FOSS` package: *Repository
    Owner* and *Repository* of this GitHub repository, *Workflow File*
-   `nuget-publishing.yml`, *Environment* `nuget-org`.
+   `nuget-publishing.yml` (the file name **with** `.yml`, without
+   `.github/workflows/`), *Environment* `nuget-org`.
 2. In this repository, add the secret `NUGET_USER` with the nuget.org user
-   (profile) name that owns the policy, not its e-mail address.
+   (profile) name of the person who created the policy, not its e-mail
+   address and not the organization that owns the policy.
 3. Optionally, add required reviewers to the `nuget-org` environment
    (Settings → Environments) so every push waits for approval.
 
 For a private repository, the policy stays temporarily active for 7 days
 until the first successful publish; restart that window on nuget.org if
 it expires.
+
+#### If the nuget.org push fails
+
+Publishing the GitHub release and pushing to nuget.org are separate
+steps. *NuGet publishing* starts only after the release is already
+published, so when it fails the release **stays published** on GitHub
+while nuget.org still has no package for that version. Nothing is rolled
+back, and nothing has to be: fix the cause, then run *NuGet publishing*
+again by hand (Actions → NuGet publishing → Run workflow, *tag* =
+`vX.Y[.Z]`, from `main`). The run downloads the same signed `.nupkg` from
+the release and pushes it; a version that is already on nuget.org is
+skipped.
+
+Read the failed run's annotation first. The `NuGet login` step reports the
+reason nuget.org gave. For example, the 26.11 release failed with:
+
+```text
+Token exchange failed (HTTP 401) at https://www.nuget.org/api/v2/token. Make sure you are
+using the username of the policy creator, not the policy owner: Workflow mismatch for policy
+'…': expected 'nuget-publishing', actual 'nuget-publishing.yml'
+```
+
+The policy's *Workflow File* was `nuget-publishing`, without `.yml`. After
+the policy was corrected on nuget.org, a manual run published 26.11.
+Other common causes are a `NUGET_USER` that is not the policy creator's
+user name, an *Environment* in the policy that differs from `nuget-org`,
+and a temporary policy that expired before its first use. If an earlier
+step fails instead (signature, checksum, version), the release holds the
+wrong `.nupkg`. Then let the internal pipeline replace it with the
+signed package and run *NuGet publishing* again.
 
 ### NuGet package
 

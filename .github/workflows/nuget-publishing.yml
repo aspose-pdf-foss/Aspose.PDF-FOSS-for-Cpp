@@ -19,10 +19,17 @@ name: NuGet publishing
 #   1. nuget.org → your user name → Trusted Publishing → add a policy:
 #        Repository Owner: the GitHub owner of this repository
 #        Repository:       the repository name
-#        Workflow File:    nuget-publishing.yml
+#        Workflow File:    nuget-publishing.yml   (with ".yml"; without it
+#                          the login fails with "Workflow mismatch")
 #        Environment:      nuget-org
 #   2. Repository secret NUGET_USER = the nuget.org user (profile) name
-#      that owns the policy (not the e-mail address).
+#      of the policy creator (not the e-mail address, not the owning
+#      organization).
+#
+# The release is already published when this runs, so a failure here
+# leaves it published without a nuget.org package. Fix the cause and run
+# this workflow by hand with the tag; see CONTRIBUTING.md → "If the
+# nuget.org push fails".
 #   3. Optionally, require reviewers on the `nuget-org` environment
 #      (Settings → Environments) so every push waits for approval.
 #
