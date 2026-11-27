@@ -21,7 +21,7 @@
 
 .EXAMPLE
   ./nuget/pack.ps1
-  ./nuget/pack.ps1 -Version <X.Y.Z>-rc.1 -Platforms x64 -OutputDir dist
+  ./nuget/pack.ps1 -Version <X.Y[.Z]>-rc.1 -Platforms x64 -OutputDir dist
 
 .NOTES
   Publishing is a separate, explicit step:
@@ -68,7 +68,7 @@ function Test-CanRun([string]$Platform) {
 
 function Get-ProjectVersion {
     $cml = Get-Content (Join-Path $RepoRoot 'CMakeLists.txt') -Raw
-    if ($cml -notmatch 'project\(Aspose_PDF_FOSS VERSION (\d+\.\d+\.\d+)') {
+    if ($cml -notmatch 'project\(Aspose_PDF_FOSS VERSION (\d+\.\d+(?:\.\d+)?)[ )]') {
         throw 'Could not read project VERSION from CMakeLists.txt'
     }
     return $Matches[1]
@@ -172,7 +172,10 @@ Invoke-Native $nuget @('pack', (Join-Path $PSScriptRoot "$PackageId.nuspec"),
     '-BasePath', $StageDir, '-OutputDirectory', $OutputDir,
     '-Properties', "version=$Version;commit=$commit",
     '-NoDefaultExcludes', '-NonInteractive')
-$nupkg = Join-Path $OutputDir "$PackageId.$Version.nupkg"
+# NuGet normalizes the version to at least three parts (26.11 -> 26.11.0)
+# in the file name and in the packed .nuspec.
+$nugetVersion = $Version -replace '^(\d+\.\d+)(?=$|-)', '$1.0'
+$nupkg = Join-Path $OutputDir "$PackageId.$nugetVersion.nupkg"
 if (-not (Test-Path $nupkg)) { throw "Expected package not found: $nupkg" }
 
 # ── 4. Verify the packed .nupkg as a Visual Studio consumer ──────────────

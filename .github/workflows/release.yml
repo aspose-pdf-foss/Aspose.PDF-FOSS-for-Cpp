@@ -1,6 +1,7 @@
 name: Release
 
-# Pushing a tag vX.Y.Z (or vX.Y.Z-suffix for a pre-release) builds and
+# Pushing a tag vX.Y or vX.Y.Z (vX.Y[.Z]-suffix for a pre-release) that
+# matches project(VERSION) in CMakeLists.txt exactly builds and
 # tests the library on every supported toolchain, packages the install
 # tree, smoke-tests each package as a find_package() consumer, builds
 # the Aspose.PDF.Cpp.FOSS NuGet package (x64/x86/ARM64, tested as a
@@ -49,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^project(Aspose_PDF_FOSS VERSION \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' CMakeLists.txt)
+          version=$(sed -n -E 's/^project\(Aspose_PDF_FOSS VERSION ([0-9]+\.[0-9]+(\.[0-9]+)?)[ )].*/\1/p' CMakeLists.txt)
           if [ -z "$version" ]; then
             echo "::error::Could not read project VERSION from CMakeLists.txt"; exit 1
           fi
@@ -63,8 +64,8 @@ jobs:
           fi
 
           tag="${GITHUB_REF_NAME}"
-          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::Tag '$tag' is not of the form vX.Y.Z or vX.Y.Z-suffix"; exit 1
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not of the form vX.Y[.Z] or vX.Y[.Z]-suffix"; exit 1
           fi
           base="${tag#v}"; base="${base%%-*}"
           if [ "$base" != "$version" ]; then

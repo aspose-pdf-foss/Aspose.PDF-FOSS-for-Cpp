@@ -71,19 +71,22 @@ project's [MIT License](LICENSE).
 ## Releasing
 
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
-when a `vX.Y.Z` tag is pushed (`vX.Y.Z-rc.1` and similar produce a
-pre-release). The version follows [Semantic Versioning](https://semver.org).
+when a `vX.Y` or `vX.Y.Z` tag is pushed (`vX.Y-rc.1` and similar produce
+a pre-release). The tag must match `project(VERSION)` exactly: tag `v26.11`
+needs `VERSION 26.11`, not `26.11.0`. NuGet normalizes a two-part version to
+three parts, so tag `v26.11` produces `Aspose.PDF.Cpp.FOSS.26.11.0.nupkg`.
 
-1. **Bump the version** in `project(Aspose_PDF_FOSS VERSION X.Y.Z ...)` in
+1. **Bump the version** in `project(Aspose_PDF_FOSS VERSION X.Y[.Z] ...)` in
    `CMakeLists.txt`. The workflow fails if the tag and this version
    differ. If the major version changes, also update the version in
    `find_package(aspose_pdf_foss X.Y ...)` in
    `.github/package-test/CMakeLists.txt`.
 2. **Update `CHANGELOG.md`.** Move the `[Unreleased]` entries into a new
-   `## [X.Y.Z] - YYYY-MM-DD` section and update the compare links at the
+   `## [X.Y.Z] - YYYY-MM-DD` section (the version exactly as in
+   `project(VERSION)`, e.g. `## [26.11]`) and update the compare links at the
    bottom.
 3. **Write release notes** (optional). The GitHub release body is taken from
-   `.github/release-notes/vX.Y.Z.md` when that file exists, and otherwise
+   `.github/release-notes/<tag>.md` when that file exists, and otherwise
    from the `## [X.Y.Z]` section of `CHANGELOG.md`.
 4. **Dry-run the packaging** (optional). Run the *Release* workflow by hand
    on your branch (Actions → Release → Run workflow). It builds and tests
