@@ -9,6 +9,8 @@ headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; an
 
 ## [Unreleased]
 
+## [26.11] - 2026-11-27
+
 ### Added
 
 - Gradient fills: `Color::PatternColorSpace` with the new `Drawing::GradientAxialShading` and
@@ -341,6 +343,7 @@ editing, and creating PDF documents, with a public API that is a strict subset o
   patch an existing `/Info` object.
 - Encryption permissions are enforced by PDF viewers, not by this library.
 
-[Unreleased]: https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/compare/v26.11...HEAD
+[26.11]: https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/compare/v1.0.1...v26.11
 [1.0.1]: https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/aspose-pdf-foss/Aspose.PDF-FOSS-for-Cpp/releases/tag/v1.0.0

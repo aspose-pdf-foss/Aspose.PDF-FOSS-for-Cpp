@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(aspose_pdf_foss_package_test LANGUAGES CXX)
 
-find_package(aspose_pdf_foss 1.0 CONFIG REQUIRED)
+find_package(aspose_pdf_foss 26.11 CONFIG REQUIRED)
 
 add_executable(package_test main.cpp)
 target_link_libraries(package_test PRIVATE aspose_pdf_foss::aspose_pdf_foss)
