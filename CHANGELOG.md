@@ -2,10 +2,15 @@
 
 All notable changes to Aspose.PDF FOSS for C++ are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The public API is the set of
-headers installed under `include/aspose/` plus `include/aspose.pdf.foss.hpp`; anything under
-`include/internal/` is an implementation detail and may change in any release.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Since 26.11, versions
+follow the Aspose product notation `YY.M`, the year and month of the release (26.11 is November 2026,
+27.1 is January 2027); a fix released between monthly releases adds a third number, such as 26.11.1.
+Earlier releases (1.0.0 and 1.0.1) used [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Changes that can break existing code are listed under *Changed* in each release.
+
+The public API is the set of headers installed under `include/aspose/` plus
+`include/aspose.pdf.foss.hpp`; anything under `include/internal/` is an implementation detail and
+may change in any release.
 
 ## [Unreleased]
 
