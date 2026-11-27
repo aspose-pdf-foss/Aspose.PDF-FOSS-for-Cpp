@@ -1,0 +1,132 @@
+name: NuGet publishing
+
+# Pushes the SIGNED Aspose.PDF.Cpp.FOSS package of a GitHub release to
+# nuget.org using NuGet Trusted Publishing (GitHub OIDC → short-lived
+# API key), so no long-lived nuget.org API key is stored anywhere.
+# https://learn.microsoft.com/nuget/nuget-org/trusted-publishing
+#
+# Flow: release.yml builds the unsigned .nupkg into a draft release →
+# Aspose's internal GitLab pipeline signs it and puts the signed .nupkg
+# (and the updated SHA256SUMS.txt line) back into the release → the
+# release is published → this workflow pushes that .nupkg to nuget.org.
+#
+# Triggers:
+#   - publishing a GitHub release (draft → published);
+#   - by hand (Actions → NuGet publishing → Run workflow) with a tag, to
+#     retry or to publish an already-published release.
+#
+# One-time setup:
+#   1. nuget.org → your user name → Trusted Publishing → add a policy:
+#        Repository Owner: the GitHub owner of this repository
+#        Repository:       the repository name
+#        Workflow File:    nuget-publishing.yml
+#        Environment:      nuget-org
+#   2. Repository secret NUGET_USER = the nuget.org user (profile) name
+#      that owns the policy (not the e-mail address).
+#   3. Optionally, require reviewers on the `nuget-org` environment
+#      (Settings → Environments) so every push waits for approval.
+#
+# The workflow refuses unsigned packages, packages whose version does not
+# match the tag, and packages that do not match SHA256SUMS.txt. A version
+# that is already on nuget.org is skipped. A version pushed to nuget.org
+# cannot be deleted, only unlisted.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-publishing-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to nuget.org
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: nuget-org
+      url: https://www.nuget.org/packages/Aspose.PDF.Cpp.FOSS
+    permissions:
+      contents: read
+      id-token: write  # GitHub OIDC token for NuGet Trusted Publishing
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      PACKAGE_ID: Aspose.PDF.Cpp.FOSS
+    steps:
+      - name: Validate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vX.Y.Z or vX.Y.Z-suffix"; exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Download package from the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p nupkg
+          gh release download "$TAG" --dir nupkg \
+            --pattern '*.nupkg' --pattern 'SHA256SUMS.txt'
+          ls -l nupkg
+
+          expected="${PACKAGE_ID}.${VERSION}.nupkg"
+          count=$(find nupkg -maxdepth 1 -name '*.nupkg' | wc -l)
+          if [ "$count" -ne 1 ] || [ ! -f "nupkg/$expected" ]; then
+            echo "::error::Release $TAG must contain exactly one package, $expected"; exit 1
+          fi
+          echo "NUPKG=nupkg/$expected" >> "$GITHUB_ENV"
+
+      - name: Check SHA256SUMS.txt
+        working-directory: nupkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${PACKAGE_ID}.${VERSION}.nupkg"
+          if [ ! -f SHA256SUMS.txt ]; then
+            echo "::error::Release $TAG has no SHA256SUMS.txt"; exit 1
+          fi
+          line=$(grep -E "[[:space:]]\*?${name//./\\.}\$" SHA256SUMS.txt || true)
+          if [ -z "$line" ]; then
+            echo "::error::SHA256SUMS.txt has no entry for $name"; exit 1
+          fi
+          echo "$line" | sha256sum --check --strict
+
+      # The internal pipeline must have replaced the unsigned package from
+      # release.yml with the signed one; nuget.org rejects unsigned
+      # packages under the reserved Aspose. prefix.
+      - name: Verify package signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet nuget verify --all "$NUPKG" --verbosity normal
+
+      - name: NuGet login (OIDC → temporary API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          dotnet nuget push "$NUPKG" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

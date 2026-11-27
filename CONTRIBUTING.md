@@ -102,19 +102,44 @@ pre-release). The version follows [Semantic Versioning](https://semver.org).
    a **draft** GitHub release with the archives, the `.nupkg`, and
    `SHA256SUMS.txt` attached. Review the draft, but **do not publish it
    yet**: its `.nupkg` is unsigned.
-7. **Sign and publish on nuget.org.** nuget.org requires packages under
-   the reserved `Aspose.` prefix to be signed with the Aspose
-   code-signing certificate, which is only available to Aspose's internal
-   release pipeline. That pipeline takes the tag, downloads the `.nupkg`
-   from the draft, signs and verifies it, replaces the draft's `.nupkg`
-   and its `SHA256SUMS.txt` line with the signed package, and pushes the
-   same bytes to nuget.org. A version pushed to nuget.org cannot be
-   deleted, only unlisted.
-8. **Publish on GitHub.** Press *Publish release* on the draft.
+7. **Sign the package.** nuget.org requires packages under the reserved
+   `Aspose.` prefix to be signed with the Aspose code-signing certificate,
+   which is only available to Aspose's internal (GitLab) release
+   pipeline. That pipeline takes the tag, downloads the `.nupkg` from the
+   draft, signs and verifies it, and replaces the draft's `.nupkg` and its
+   `SHA256SUMS.txt` line with the signed package.
+8. **Publish on GitHub.** Press *Publish release* on the draft. This
+   triggers [`.github/workflows/nuget-publishing.yml`](.github/workflows/nuget-publishing.yml),
+   which downloads the `.nupkg` from the release, checks it against
+   `SHA256SUMS.txt`, its version against the tag and its signature, and
+   pushes it to nuget.org through
+   [Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing).
+   A version pushed to nuget.org cannot be deleted, only unlisted.
 
-Re-running the workflow for an existing tag replaces the release's assets
-and leaves its notes unchanged. nuget.org skips a version that has already
-been pushed.
+Re-running the *Release* workflow for an existing tag replaces the
+release's assets and leaves its notes unchanged. To retry the nuget.org
+push, run *NuGet publishing* by hand (Actions → NuGet publishing → Run
+workflow) with the tag; nuget.org skips a version that has already been
+pushed.
+
+#### Trusted Publishing setup (one time)
+
+`nuget-publishing.yml` stores no nuget.org API key. It exchanges a GitHub
+OIDC token for a temporary key (valid for one hour) with `NuGet/login`.
+To enable it:
+
+1. On nuget.org, open your user name → **Trusted Publishing** and add a
+   policy for the owner of the `Aspose.PDF.Cpp.FOSS` package: *Repository
+   Owner* and *Repository* of this GitHub repository, *Workflow File*
+   `nuget-publishing.yml`, *Environment* `nuget-org`.
+2. In this repository, add the secret `NUGET_USER` with the nuget.org user
+   (profile) name that owns the policy, not its e-mail address.
+3. Optionally, add required reviewers to the `nuget-org` environment
+   (Settings → Environments) so every push waits for approval.
+
+For a private repository, the policy stays temporarily active for 7 days
+until the first successful publish; restart that window on nuget.org if
+it expires.
 
 ### NuGet package
 
@@ -147,7 +172,7 @@ the host can; ARM64 is build-only on x64 hosts.
 
 Packages built here are unsigned. nuget.org accepts `Aspose.PDF.Cpp.FOSS`
 only when it is signed with the Aspose code-signing certificate, so
-publishing always goes through Aspose's internal release pipeline (see
-*Releasing*, step 7). The pipeline needs a GitHub token with *Contents:
-Read and write* on this repository to read the draft release and replace
-its `.nupkg`.
+signing always goes through Aspose's internal release pipeline, and the
+push through `nuget-publishing.yml` (see *Releasing*, steps 7–8). The
+pipeline needs a GitHub token with *Contents: Read and write* on this
+repository to read the draft release and replace its `.nupkg`.
